@@ -290,6 +290,33 @@ fun resolve_by_stranger_aborts() {
     abort 99
 }
 
+/// The arbiter can lift a tag it upheld: a settled target must not
+/// stay frozen because the initiator lost their key or refuses to
+/// act, and the judging authority must be able to reverse itself.
+#[test]
+fun arbiter_can_resolve_original_dispute() {
+    let mut s = ts::begin(ADMIN);
+    setup(&mut s);
+    setup_tag(&mut s);
+    let clock = new_clock(&mut s);
+    let terms_id = std_terms(&mut s, 1_000, 0);
+    let (ip_id, _) = root_with_terms(&mut s, ALICE, 1, terms_id, &clock);
+    let dispute_id = raise_as(&mut s, CAROL, ip_id, 9, &clock);
+    judge_as(&mut s, ADMIN, ip_id, dispute_id, true);
+    assert_tagged(&mut s, ip_id, true);
+
+    // ADMIN is the arbiter, not the initiator (CAROL raised it).
+    resolve_as(&mut s, ADMIN, ip_id, dispute_id);
+    assert_tagged(&mut s, ip_id, false);
+
+    s.next_tx(ADMIN);
+    let reg = s.take_shared<DisputeRegistry>();
+    assert!(dispute::state(&reg, dispute_id) == RESOLVED);
+    ts::return_shared(reg);
+    clock.destroy_for_testing();
+    s.end();
+}
+
 /// Propagation: an upheld tag on the root extends to a derivative,
 /// permissionlessly, and freezes it.
 #[test]

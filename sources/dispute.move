@@ -15,7 +15,8 @@
 ///    its descendants (the derivative tree monetizes the infringing
 ///    work, so it freezes with it),
 ///  - propagated tags resolve permissionlessly once the source
-///    dispute is closed; original tags resolve by their initiator.
+///    dispute is closed; original tags resolve by their initiator or
+///    by the arbiter.
 ///
 /// v1 simplification: judgement is a single arbiter address. Bonded,
 /// optimistic arbitration is the known upgrade path; it slots in
@@ -109,7 +110,7 @@ public struct DisputePropagated has copy, drop {
     target: ID,
 }
 
-public struct DisputeResolved has copy, drop { dispute_id: u64 }
+public struct DisputeResolved has copy, drop { dispute_id: u64, resolver: address }
 
 public struct ArbiterSet has copy, drop { arbiter: address }
 
@@ -271,9 +272,12 @@ public fun propagate(
     dispute_id
 }
 
-/// Lifts an upheld tag. Original disputes resolve by their initiator;
-/// propagated ones resolve permissionlessly once the source dispute
-/// is closed (dismissed, cancelled or resolved).
+/// Lifts an upheld tag. Original disputes resolve by their initiator
+/// or by the arbiter: the judging authority must be able to reverse
+/// its own judgement, and a settled target must not stay frozen just
+/// because the initiator lost their key or refuses to act. Propagated
+/// disputes resolve permissionlessly once the source dispute is
+/// closed (dismissed, cancelled or resolved).
 public fun resolve(
     reg: &mut DisputeRegistry,
     target: &mut IPAsset,
@@ -296,11 +300,14 @@ public fun resolve(
     assert!(dispute.state == STATE_UPHELD, ENotUpheld);
     assert!(dispute.target == object::id(target), EWrongTarget);
     if (source_id == 0) {
-        assert!(ctx.sender() == dispute.initiator, ENotInitiator);
+        assert!(
+            ctx.sender() == dispute.initiator || ctx.sender() == reg.arbiter,
+            ENotInitiator,
+        );
     };
     dispute.state = STATE_RESOLVED;
     ip::remove_tag(target);
-    event::emit(DisputeResolved { dispute_id });
+    event::emit(DisputeResolved { dispute_id, resolver: ctx.sender() });
 }
 
 fun assert_current_version(reg: &DisputeRegistry) {
