@@ -31,6 +31,7 @@ Registration is self-attested: the chain records who claimed what and when, and 
 | `royalty` | Payments in, claims out; ancestor shares accrue per payment and are pulled with the ancestor's own capability |
 | `dispute` | Raise, judge, resolve; an upheld dispute freezes the target's licensing and money paths, and propagates down the derivative tree |
 | `protocol` | Shared levers: a circuit breaker over every money path and a protocol fee hook (rate starts at zero) |
+| `haneul_ip` | Package identity: the one-time witness, the Publisher claim, and the Display templates wallets render objects with |
 
 ## Design notes
 
