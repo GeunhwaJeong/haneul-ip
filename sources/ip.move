@@ -1,0 +1,485 @@
+// Copyright (c) Haneul Labs
+// SPDX-License-Identifier: Apache-2.0
+
+/// The IP asset itself: identity, provenance graph, and revenue vault
+/// in one object.
+///
+/// This single struct replaces four layers of Story Protocol's EVM
+/// architecture at once:
+///  - IPAccount (ERC-6551 token-bound account) — a Move object IS an
+///    identity that can own things; no account contract needed.
+///  - IPAssetRegistry — the object store is the registry.
+///  - The `0x0101` IP-graph precompile — Story forked geth to store
+///    the ancestor graph natively because EVM contract storage made
+///    it prohibitive. The graph here is two object fields. This works
+///    because the graph is append-only: parents are fixed at
+///    registration and never change, so each IP's ancestor royalty
+///    map can be merged ONCE at registration and stays valid forever.
+///  - IpRoyaltyVault (one BeaconProxy per IP) — the `revenue` Bag
+///    holds one `Pool<T>` per coin type, inside the object.
+///
+/// Royalty semantics are Story's LAP ("liquid absolute percentage"):
+/// each ancestor's bps applies to EVERY payment made to this IP, not
+/// to a per-hop waterfall. An ancestor's share sits in this object's
+/// pool as `owed` until the ancestor claims it with their own cap —
+/// the pull model is forced by the fact that an owner's wallet
+/// address is not knowable on-chain from the IP object alone.
+module haneul_ip::ip;
+
+use haneul::bag::{Self, Bag};
+use haneul::balance::Balance;
+use haneul::clock::Clock;
+use haneul::coin::{Self, Coin};
+use haneul::event;
+use haneul::vec_map::{Self, VecMap};
+use haneul::vec_set::{Self, VecSet};
+use haneul_ip::terms::{Self, Terms, TermsRegistry};
+use std::string::String;
+use std::type_name::{Self, TypeName};
+
+const ENotOwner: u64 = 0;
+const EBadContentHash: u64 = 1;
+const ETagged: u64 = 2;
+const EExpired: u64 = 3;
+const ENotRoot: u64 = 4;
+const ETermsAlreadyAttached: u64 = 5;
+const ETermsNotAttached: u64 = 6;
+const EInvalidRevShare: u64 = 7;
+const ENothingToClaim: u64 = 8;
+const EConfigDisabled: u64 = 9;
+const ETermsNotFound: u64 = 10;
+
+const BPS_DENOM: u64 = 10_000;
+const CONTENT_HASH_LENGTH: u64 = 32;
+
+public struct IPAsset has key {
+    id: UID,
+    version: u64,
+    name: String,
+    /// 32-byte hash of the underlying work. Self-attested: the chain
+    /// records who claimed what and when; it cannot verify the claim.
+    /// That gap is what the dispute module exists for.
+    content_hash: vector<u8>,
+    uri: String,
+    creator: address,
+    registered_at_ms: u64,
+    /// 0 = never expires. A derivative inherits the earliest expiry
+    /// among its parents and its license terms.
+    expires_at_ms: u64,
+    /// Direct parents. Set once at registration, immutable after.
+    parents: vector<ID>,
+    /// ancestor -> absolute royalty share (bps) of every payment made
+    /// to THIS IP. Merged once at registration from the parents'
+    /// maps. Direct parents are entries here too.
+    ancestors: VecMap<ID, u64>,
+    /// Sum of `ancestors` values. <= 10_000 by construction.
+    royalty_stack_bps: u64,
+    /// Terms ids this IP offers licenses under. Roots choose theirs;
+    /// derivatives get exactly the terms they were registered under
+    /// (the reciprocal rule) and cannot add more.
+    attached_terms: VecSet<u64>,
+    /// Per-terms owner overrides (Story's LicensingConfig layer).
+    configs: VecMap<u64, LicensingConfig>,
+    /// Active upheld disputes. Non-zero freezes licensing, linking,
+    /// payments and claims.
+    tag_count: u64,
+    /// TypeName -> Pool<T>: one revenue vault per coin type.
+    revenue: Bag,
+    licenses_minted: u64,
+    derivatives_registered: u64,
+}
+
+/// Ownership of an IP. `store` on purpose: IP ownership is an asset
+/// that must be sellable/transferable, unlike an admin cap.
+public struct IPOwnerCap has key, store {
+    id: UID,
+    ip: ID,
+}
+
+/// Owner overrides for one attached terms id. A snapshot of the
+/// effective values is taken into each `License` at mint time, so
+/// changing these never rewrites already-sold licenses — which is
+/// also why minting takes slippage guards.
+public struct LicensingConfig has store, copy, drop {
+    disabled: bool,
+    minting_fee_override: Option<u64>,
+    rev_share_override_bps: Option<u64>,
+}
+
+public struct Pool<phantom T> has store {
+    balance: Balance<T>,
+    /// ancestor -> claimable amount, accrued at payment time.
+    owed: VecMap<ID, u64>,
+    /// Invariant: sum of `owed` values; the owner's claimable share
+    /// is `balance - total_owed`.
+    total_owed: u64,
+}
+
+public struct IPRegistered has copy, drop {
+    ip: ID,
+    creator: address,
+    name: String,
+    content_hash: vector<u8>,
+}
+
+public struct DerivativeRegistered has copy, drop {
+    ip: ID,
+    creator: address,
+    parents: vector<ID>,
+    royalty_stack_bps: u64,
+    expires_at_ms: u64,
+}
+
+public struct TermsAttached has copy, drop {
+    ip: ID,
+    terms_id: u64,
+}
+
+public struct LicensingConfigSet has copy, drop {
+    ip: ID,
+    terms_id: u64,
+    disabled: bool,
+}
+
+public struct Deposited has copy, drop {
+    ip: ID,
+    coin_type: TypeName,
+    amount: u64,
+    to_ancestors: u64,
+}
+
+// === Registration ===
+
+/// Registers a root IP. Shares the asset, returns the owner cap.
+public fun register(
+    name: String,
+    content_hash: vector<u8>,
+    uri: String,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): IPOwnerCap {
+    let (cap, ip_id) = new_ip(
+        name,
+        content_hash,
+        uri,
+        vector[],
+        vec_map::empty(),
+        0,
+        0,
+        vec_set::empty(),
+        clock,
+        ctx,
+    );
+    event::emit(IPRegistered { ip: ip_id, creator: ctx.sender(), name, content_hash });
+    cap
+}
+
+/// Called by `derivative::finish` with the merged graph data.
+public(package) fun new_derivative(
+    name: String,
+    content_hash: vector<u8>,
+    uri: String,
+    parents: vector<ID>,
+    ancestors: VecMap<ID, u64>,
+    royalty_stack_bps: u64,
+    expires_at_ms: u64,
+    attached_terms: VecSet<u64>,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): IPOwnerCap {
+    let (cap, ip_id) = new_ip(
+        name,
+        content_hash,
+        uri,
+        parents,
+        ancestors,
+        royalty_stack_bps,
+        expires_at_ms,
+        attached_terms,
+        clock,
+        ctx,
+    );
+    event::emit(DerivativeRegistered {
+        ip: ip_id,
+        creator: ctx.sender(),
+        parents,
+        royalty_stack_bps,
+        expires_at_ms,
+    });
+    cap
+}
+
+fun new_ip(
+    name: String,
+    content_hash: vector<u8>,
+    uri: String,
+    parents: vector<ID>,
+    ancestors: VecMap<ID, u64>,
+    royalty_stack_bps: u64,
+    expires_at_ms: u64,
+    attached_terms: VecSet<u64>,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): (IPOwnerCap, ID) {
+    assert!(content_hash.length() == CONTENT_HASH_LENGTH, EBadContentHash);
+    let asset = IPAsset {
+        id: object::new(ctx),
+        version: 1,
+        name,
+        content_hash,
+        uri,
+        creator: ctx.sender(),
+        registered_at_ms: clock.timestamp_ms(),
+        expires_at_ms,
+        parents,
+        ancestors,
+        royalty_stack_bps,
+        attached_terms,
+        configs: vec_map::empty(),
+        tag_count: 0,
+        revenue: bag::new(ctx),
+        licenses_minted: 0,
+        derivatives_registered: 0,
+    };
+    let ip_id = object::id(&asset);
+    let cap = IPOwnerCap { id: object::new(ctx), ip: ip_id };
+    transfer::share_object(asset);
+    (cap, ip_id)
+}
+
+// === Terms management (owner-only) ===
+
+/// Only roots attach terms; a derivative's terms are fixed at
+/// registration (Story's "derivatives cannot add license terms").
+public fun attach_terms(
+    self: &mut IPAsset,
+    cap: &IPOwnerCap,
+    reg: &TermsRegistry,
+    terms_id: u64,
+) {
+    self.assert_owner(cap);
+    self.assert_not_tagged();
+    assert!(self.parents.is_empty(), ENotRoot);
+    assert!(terms::exists_(reg, terms_id), ETermsNotFound);
+    assert!(!self.attached_terms.contains(&terms_id), ETermsAlreadyAttached);
+    self.attached_terms.insert(terms_id);
+    event::emit(TermsAttached { ip: object::id(self), terms_id });
+}
+
+public fun set_licensing_config(
+    self: &mut IPAsset,
+    cap: &IPOwnerCap,
+    terms_id: u64,
+    disabled: bool,
+    minting_fee_override: Option<u64>,
+    rev_share_override_bps: Option<u64>,
+) {
+    self.assert_owner(cap);
+    assert!(self.attached_terms.contains(&terms_id), ETermsNotAttached);
+    if (rev_share_override_bps.is_some()) {
+        assert!(*rev_share_override_bps.borrow() <= BPS_DENOM, EInvalidRevShare);
+    };
+    let config = LicensingConfig { disabled, minting_fee_override, rev_share_override_bps };
+    if (self.configs.contains(&terms_id)) {
+        *self.configs.get_mut(&terms_id) = config;
+    } else {
+        self.configs.insert(terms_id, config);
+    };
+    event::emit(LicensingConfigSet { ip: object::id(self), terms_id, disabled });
+}
+
+// === Revenue vault (package-internal; entry points live in `royalty`) ===
+
+/// Splits `payment` across the ancestor map as `owed` accruals; the
+/// remainder is the owner's. The map is <= MAX_ANCESTORS entries, so
+/// the loop is bounded.
+public(package) fun deposit<T>(self: &mut IPAsset, payment: Coin<T>) {
+    let amount = payment.value();
+    if (amount == 0) {
+        payment.destroy_zero();
+        return
+    };
+    let ip_id = object::id(self);
+    let ancestors = self.ancestors;
+    ensure_pool<T>(self);
+    let pool = self.revenue.borrow_mut<TypeName, Pool<T>>(type_name::with_defining_ids<T>());
+
+    let mut to_ancestors = 0;
+    let mut i = 0;
+    let n = ancestors.length();
+    while (i < n) {
+        let (anc, bps) = ancestors.get_entry_by_idx(i);
+        let cut = ((amount as u128) * ((*bps) as u128) / (BPS_DENOM as u128)) as u64;
+        if (cut > 0) {
+            if (pool.owed.contains(anc)) {
+                let owed = pool.owed.get_mut(anc);
+                *owed = *owed + cut;
+            } else {
+                pool.owed.insert(*anc, cut);
+            };
+            pool.total_owed = pool.total_owed + cut;
+            to_ancestors = to_ancestors + cut;
+        };
+        i = i + 1;
+    };
+    pool.balance.join(payment.into_balance());
+    event::emit(Deposited {
+        ip: ip_id,
+        coin_type: type_name::with_defining_ids<T>(),
+        amount,
+        to_ancestors,
+    });
+}
+
+public(package) fun withdraw_owner<T>(self: &mut IPAsset, ctx: &mut TxContext): Coin<T> {
+    let key = type_name::with_defining_ids<T>();
+    assert!(self.revenue.contains(key), ENothingToClaim);
+    let pool = self.revenue.borrow_mut<TypeName, Pool<T>>(key);
+    let available = pool.balance.value() - pool.total_owed;
+    assert!(available > 0, ENothingToClaim);
+    coin::from_balance(pool.balance.split(available), ctx)
+}
+
+public(package) fun withdraw_ancestor<T>(
+    self: &mut IPAsset,
+    ancestor: ID,
+    ctx: &mut TxContext,
+): Coin<T> {
+    let key = type_name::with_defining_ids<T>();
+    assert!(self.revenue.contains(key), ENothingToClaim);
+    let pool = self.revenue.borrow_mut<TypeName, Pool<T>>(key);
+    assert!(pool.owed.contains(&ancestor), ENothingToClaim);
+    let (_, amount) = pool.owed.remove(&ancestor);
+    pool.total_owed = pool.total_owed - amount;
+    coin::from_balance(pool.balance.split(amount), ctx)
+}
+
+fun ensure_pool<T>(self: &mut IPAsset) {
+    let key = type_name::with_defining_ids<T>();
+    if (!self.revenue.contains(key)) {
+        self.revenue.add(key, Pool<T> {
+            balance: haneul::balance::zero<T>(),
+            owed: vec_map::empty(),
+            total_owed: 0,
+        });
+    };
+}
+
+public fun claimable_by_owner<T>(self: &IPAsset): u64 {
+    let key = type_name::with_defining_ids<T>();
+    if (!self.revenue.contains(key)) return 0;
+    let pool = self.revenue.borrow<TypeName, Pool<T>>(key);
+    pool.balance.value() - pool.total_owed
+}
+
+public fun claimable_by_ancestor<T>(self: &IPAsset, ancestor: ID): u64 {
+    let key = type_name::with_defining_ids<T>();
+    if (!self.revenue.contains(key)) return 0;
+    let pool = self.revenue.borrow<TypeName, Pool<T>>(key);
+    if (!pool.owed.contains(&ancestor)) return 0;
+    *pool.owed.get(&ancestor)
+}
+
+// === Effective licensing values (terms + per-IP override) ===
+
+public fun effective_minting_fee(self: &IPAsset, terms_id: u64, t: &Terms): u64 {
+    if (self.configs.contains(&terms_id)) {
+        let config = self.configs.get(&terms_id);
+        if (config.minting_fee_override.is_some()) {
+            return *config.minting_fee_override.borrow()
+        };
+    };
+    terms::default_minting_fee(t)
+}
+
+public fun effective_rev_share_bps(self: &IPAsset, terms_id: u64, t: &Terms): u64 {
+    if (self.configs.contains(&terms_id)) {
+        let config = self.configs.get(&terms_id);
+        if (config.rev_share_override_bps.is_some()) {
+            return *config.rev_share_override_bps.borrow()
+        };
+    };
+    terms::commercial_rev_share_bps(t)
+}
+
+public(package) fun assert_config_enabled(self: &IPAsset, terms_id: u64) {
+    if (self.configs.contains(&terms_id)) {
+        assert!(!self.configs.get(&terms_id).disabled, EConfigDisabled);
+    };
+}
+
+// === Guards and state transitions used by sibling modules ===
+
+public fun assert_owner(self: &IPAsset, cap: &IPOwnerCap) {
+    assert!(object::id(self) == cap.ip, ENotOwner);
+}
+
+public(package) fun assert_not_tagged(self: &IPAsset) {
+    assert!(self.tag_count == 0, ETagged);
+}
+
+public(package) fun assert_alive(self: &IPAsset, clock: &Clock) {
+    self.assert_not_tagged();
+    assert!(!self.is_expired(clock), EExpired);
+}
+
+public(package) fun add_tag(self: &mut IPAsset) {
+    self.tag_count = self.tag_count + 1;
+}
+
+public(package) fun remove_tag(self: &mut IPAsset) {
+    self.tag_count = self.tag_count - 1;
+}
+
+public(package) fun note_license_minted(self: &mut IPAsset) {
+    self.licenses_minted = self.licenses_minted + 1;
+}
+
+public(package) fun note_derivative(self: &mut IPAsset) {
+    self.derivatives_registered = self.derivatives_registered + 1;
+}
+
+// === Views ===
+
+public fun cap_ip(cap: &IPOwnerCap): ID { cap.ip }
+
+public fun is_tagged(self: &IPAsset): bool { self.tag_count > 0 }
+
+public fun tag_count(self: &IPAsset): u64 { self.tag_count }
+
+public fun is_expired(self: &IPAsset, clock: &Clock): bool {
+    self.expires_at_ms != 0 && clock.timestamp_ms() >= self.expires_at_ms
+}
+
+public fun expires_at_ms(self: &IPAsset): u64 { self.expires_at_ms }
+
+public fun is_derivative(self: &IPAsset): bool { !self.parents.is_empty() }
+
+public fun parents(self: &IPAsset): &vector<ID> { &self.parents }
+
+public fun ancestors(self: &IPAsset): &VecMap<ID, u64> { &self.ancestors }
+
+public fun is_ancestor_of(self: &IPAsset, maybe_ancestor: ID): bool {
+    self.ancestors.contains(&maybe_ancestor)
+}
+
+public fun ancestor_share_bps(self: &IPAsset, ancestor: ID): u64 {
+    if (!self.ancestors.contains(&ancestor)) return 0;
+    *self.ancestors.get(&ancestor)
+}
+
+public fun royalty_stack_bps(self: &IPAsset): u64 { self.royalty_stack_bps }
+
+public fun has_terms(self: &IPAsset, terms_id: u64): bool {
+    self.attached_terms.contains(&terms_id)
+}
+
+public fun name(self: &IPAsset): String { self.name }
+
+public fun content_hash(self: &IPAsset): vector<u8> { self.content_hash }
+
+public fun creator(self: &IPAsset): address { self.creator }
+
+public fun licenses_minted(self: &IPAsset): u64 { self.licenses_minted }
+
+public fun derivatives_registered(self: &IPAsset): u64 { self.derivatives_registered }
