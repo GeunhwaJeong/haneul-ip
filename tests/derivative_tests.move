@@ -36,6 +36,21 @@ const ALICE: address = @0xA11CE;
 const BOB: address = @0xB0B;
 const CAROL: address = @0xCA401;
 
+/// Builds a linear chain of `depth` IPs under `terms_id` (a root plus
+/// depth - 1 generations of derivatives), consuming content-hash
+/// seeds sequentially from `seed`. Returns the tip's ip id. A tip at
+/// depth d carries d - 1 ancestor entries.
+fun chain(s: &mut Scenario, terms_id: u64, depth: u8, seed: u8, clock: &Clock): ID {
+    let (mut tip, _) = root_with_terms(s, ALICE, seed, terms_id, clock);
+    let mut i: u8 = 1;
+    while (i < depth) {
+        let (child, _) = make_child(s, ALICE, tip, terms_id, 0, seed + i, clock);
+        tip = child;
+        i = i + 1;
+    };
+    tip
+}
+
 /// Direct-path link helper: builder with one parent via
 /// `add_parent_direct`, finished immediately.
 fun make_child_direct(
@@ -377,6 +392,40 @@ fun linking_expired_parent_aborts() {
 
     clock.increment_for_testing(1_000_001);
     make_child_direct(&mut s, CAROL, child_ip, timed_terms, 0, 0, 0, 3, &clock);
+    abort 99
+}
+
+/// The merge stays sound all the way to the bound: a chain of depth
+/// 33 gives its tip exactly MAX_ANCESTORS (32) entries. Free terms
+/// keep the royalty stack at zero so only the ancestor count is
+/// exercised.
+#[test]
+fun ancestor_chain_reaches_the_bound() {
+    let mut s = ts::begin(ADMIN);
+    setup(&mut s);
+    let clock = new_clock(&mut s);
+    let terms_id = free_terms(&mut s);
+    let tip = chain(&mut s, terms_id, 33, 1, &clock);
+
+    s.next_tx(ALICE);
+    let asset = s.take_shared_by_id<IPAsset>(tip);
+    assert!(ip::ancestors(&asset).length() == derivative::max_ancestors());
+    ts::return_shared(asset);
+    clock.destroy_for_testing();
+    s.end();
+}
+
+/// One generation past the bound: linking a tip that already carries
+/// 32 ancestors would give the child 33 entries.
+#[test]
+#[expected_failure(abort_code = haneul_ip::derivative::ETooManyAncestors)]
+fun thirty_third_ancestor_aborts() {
+    let mut s = ts::begin(ADMIN);
+    setup(&mut s);
+    let clock = new_clock(&mut s);
+    let terms_id = free_terms(&mut s);
+    let tip = chain(&mut s, terms_id, 33, 1, &clock);
+    make_child(&mut s, BOB, tip, terms_id, 0, 100, &clock);
     abort 99
 }
 

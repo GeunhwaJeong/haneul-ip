@@ -26,6 +26,56 @@ const ADMIN: address = @0xAD;
 const ALICE: address = @0xA11CE;
 const BOB: address = @0xB0B;
 
+// Marker types standing in for distinct coin types in the
+// accepted-currency bound tests (only their TypeName is used).
+public struct C1 {}
+public struct C2 {}
+public struct C3 {}
+public struct C4 {}
+public struct C5 {}
+public struct C6 {}
+public struct C7 {}
+public struct C8 {}
+public struct C9 {}
+public struct C10 {}
+public struct C11 {}
+public struct C12 {}
+public struct C13 {}
+public struct C14 {}
+public struct C15 {}
+public struct C16 {}
+public struct C17 {}
+
+/// Fills the accepted-currency set of a terms-free root to exactly
+/// MAX_ACCEPTED_CURRENCIES (16) entries.
+fun accept_sixteen(asset: &mut IPAsset, cap: &IPOwnerCap) {
+    ip::accept_currency<C1>(asset, cap);
+    ip::accept_currency<C2>(asset, cap);
+    ip::accept_currency<C3>(asset, cap);
+    ip::accept_currency<C4>(asset, cap);
+    ip::accept_currency<C5>(asset, cap);
+    ip::accept_currency<C6>(asset, cap);
+    ip::accept_currency<C7>(asset, cap);
+    ip::accept_currency<C8>(asset, cap);
+    ip::accept_currency<C9>(asset, cap);
+    ip::accept_currency<C10>(asset, cap);
+    ip::accept_currency<C11>(asset, cap);
+    ip::accept_currency<C12>(asset, cap);
+    ip::accept_currency<C13>(asset, cap);
+    ip::accept_currency<C14>(asset, cap);
+    ip::accept_currency<C15>(asset, cap);
+    ip::accept_currency<C16>(asset, cap);
+}
+
+/// Approves `n` distinct licensees derived from sequential integers.
+fun approve_many(asset: &mut IPAsset, cap: &IPOwnerCap, n: u64) {
+    let mut i = 0;
+    while (i < n) {
+        ip::approve_licensee(asset, cap, haneul::address::from_u256(i as u256));
+        i = i + 1;
+    };
+}
+
 #[test]
 fun register_root_basics() {
     let mut s = ts::begin(ADMIN);
@@ -222,6 +272,84 @@ fun licensing_config_overrides_effective_values() {
     s.return_to_sender(cap);
     clock.destroy_for_testing();
     s.end();
+}
+
+/// The accepted-currency set holds exactly its bound.
+#[test]
+fun accepted_currencies_reach_the_bound() {
+    let mut s = ts::begin(ADMIN);
+    setup(&mut s);
+    let clock = new_clock(&mut s);
+    let (ip_id, cap_id) = root(&mut s, ALICE, 1, &clock);
+
+    s.next_tx(ALICE);
+    let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
+    let cap = s.take_from_sender_by_id<IPOwnerCap>(cap_id);
+    accept_sixteen(&mut asset, &cap);
+    assert!(ip::is_currency_accepted<C1>(&asset));
+    assert!(ip::is_currency_accepted<C16>(&asset));
+    ts::return_shared(asset);
+    s.return_to_sender(cap);
+    clock.destroy_for_testing();
+    s.end();
+}
+
+/// The bound keeps membership checks on the payment path cheap; the
+/// 17th currency is rejected.
+#[test]
+#[expected_failure(abort_code = haneul_ip::ip::ETooManyCurrencies)]
+fun seventeenth_currency_aborts() {
+    let mut s = ts::begin(ADMIN);
+    setup(&mut s);
+    let clock = new_clock(&mut s);
+    let (ip_id, cap_id) = root(&mut s, ALICE, 1, &clock);
+
+    s.next_tx(ALICE);
+    let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
+    let cap = s.take_from_sender_by_id<IPOwnerCap>(cap_id);
+    accept_sixteen(&mut asset, &cap);
+    ip::accept_currency<C17>(&mut asset, &cap);
+    abort 99
+}
+
+/// The approval allowlist holds exactly its bound, and re-approving
+/// an existing licensee stays a no-op rather than counting twice.
+#[test]
+fun approval_list_reaches_the_bound() {
+    let mut s = ts::begin(ADMIN);
+    setup(&mut s);
+    let clock = new_clock(&mut s);
+    let (ip_id, cap_id) = root(&mut s, ALICE, 1, &clock);
+
+    s.next_tx(ALICE);
+    let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
+    let cap = s.take_from_sender_by_id<IPOwnerCap>(cap_id);
+    approve_many(&mut asset, &cap, 128);
+    assert!(ip::is_approved_licensee(&asset, haneul::address::from_u256(0)));
+    assert!(ip::is_approved_licensee(&asset, haneul::address::from_u256(127)));
+    // Already approved: returns instead of tripping the bound.
+    ip::approve_licensee(&mut asset, &cap, haneul::address::from_u256(0));
+    ts::return_shared(asset);
+    s.return_to_sender(cap);
+    clock.destroy_for_testing();
+    s.end();
+}
+
+/// A franchise needing more than 128 standing approvals should model
+/// itself as multiple IPs; the 129th licensee is rejected.
+#[test]
+#[expected_failure(abort_code = haneul_ip::ip::ETooManyApprovals)]
+fun the_129th_licensee_aborts() {
+    let mut s = ts::begin(ADMIN);
+    setup(&mut s);
+    let clock = new_clock(&mut s);
+    let (ip_id, cap_id) = root(&mut s, ALICE, 1, &clock);
+
+    s.next_tx(ALICE);
+    let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
+    let cap = s.take_from_sender_by_id<IPOwnerCap>(cap_id);
+    approve_many(&mut asset, &cap, 129);
+    abort 99
 }
 
 #[test]
