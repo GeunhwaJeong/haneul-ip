@@ -31,6 +31,9 @@ const EPaused: u64 = 0;
 const EFeeAboveMax: u64 = 1;
 const EWrongVersion: u64 = 2;
 const ENotUpgrade: u64 = 3;
+const ENoPendingTransfer: u64 = 4;
+const ENotPendingAdmin: u64 = 5;
+const ETransferNotAccepted: u64 = 6;
 
 const BPS_DENOM: u64 = 10_000;
 /// Bumped together with any package upgrade that must invalidate the
@@ -55,6 +58,11 @@ public struct ProtocolConfig has key {
     /// anything else: an emergency lever must never be hostage to a
     /// migration or a config state.
     paused: bool,
+    /// The address a cap handoff has been proposed to, if any.
+    pending_admin: Option<address>,
+    /// Whether the proposed recipient has counter-signed. Only an
+    /// accepted proposal can be executed.
+    pending_accepted: bool,
 }
 
 /// Admin capability. `key`-only on purpose: it can never leave the
@@ -64,6 +72,10 @@ public struct ProtocolCap has key { id: UID }
 
 public struct FeeSet has copy, drop { fee_bps: u64 }
 public struct ConfigMigrated has copy, drop { version: u64 }
+public struct CapTransferProposed has copy, drop { to: address }
+public struct CapTransferAccepted has copy, drop { by: address }
+public struct CapTransferExecuted has copy, drop { to: address }
+public struct CapTransferCancelled has copy, drop {}
 public struct TreasurySet has copy, drop { treasury: address }
 public struct PauseSet has copy, drop { paused: bool }
 /// Carries the coin type so the treasury's event stream reconciles
@@ -77,6 +89,8 @@ fun init(ctx: &mut TxContext) {
         treasury: ctx.sender(),
         fee_bps: 0,
         paused: false,
+        pending_admin: option::none(),
+        pending_accepted: false,
     });
     transfer::transfer(ProtocolCap { id: object::new(ctx) }, ctx.sender());
 }
@@ -129,12 +143,47 @@ public fun set_paused(cfg: &mut ProtocolConfig, _cap: &ProtocolCap, paused: bool
     event::emit(PauseSet { paused });
 }
 
-/// One-step cap handoff.
-/// TODO before any mainnet publish: replace with the three-step
-/// propose -> accept -> execute handoff (receiver must sign), so a
-/// typoed address cannot orphan the protocol.
-public fun transfer_cap(cap: ProtocolCap, to: address) {
+// === Cap handoff: propose -> accept -> execute ===
+//
+// The cap is the whole protocol; a one-step transfer to a typoed
+// address would orphan it forever. The three-step handoff makes that
+// impossible: the cap only ever moves to an address that has already
+// proven, with its own signature, that someone controls it.
+
+/// Step 1: the holder names the intended recipient. Re-proposing
+/// overwrites any earlier proposal and voids its acceptance.
+public fun propose_cap_transfer(cfg: &mut ProtocolConfig, _cap: &ProtocolCap, to: address) {
+    cfg.pending_admin = option::some(to);
+    cfg.pending_accepted = false;
+    event::emit(CapTransferProposed { to });
+}
+
+/// Step 2: the recipient counter-signs. This is what makes a typo
+/// harmless: an address nobody controls can never produce this
+/// signature, so the cap can never be executed into the void.
+public fun accept_cap_transfer(cfg: &mut ProtocolConfig, ctx: &TxContext) {
+    assert!(cfg.pending_admin.is_some(), ENoPendingTransfer);
+    assert!(*cfg.pending_admin.borrow() == ctx.sender(), ENotPendingAdmin);
+    cfg.pending_accepted = true;
+    event::emit(CapTransferAccepted { by: ctx.sender() });
+}
+
+/// Step 3: the holder hands the cap to the accepted recipient and the
+/// proposal is consumed.
+public fun execute_cap_transfer(cfg: &mut ProtocolConfig, cap: ProtocolCap) {
+    assert!(cfg.pending_admin.is_some(), ENoPendingTransfer);
+    assert!(cfg.pending_accepted, ETransferNotAccepted);
+    let to = cfg.pending_admin.extract();
+    cfg.pending_accepted = false;
     transfer::transfer(cap, to);
+    event::emit(CapTransferExecuted { to });
+}
+
+/// The holder may withdraw a proposal any time before execution.
+public fun cancel_cap_transfer(cfg: &mut ProtocolConfig, _cap: &ProtocolCap) {
+    cfg.pending_admin = option::none();
+    cfg.pending_accepted = false;
+    event::emit(CapTransferCancelled {});
 }
 
 /// Brings a config left behind by a package upgrade up to the
@@ -147,6 +196,10 @@ public fun migrate(cfg: &mut ProtocolConfig, _cap: &ProtocolCap) {
 }
 
 public fun version(cfg: &ProtocolConfig): u64 { cfg.version }
+
+public fun pending_admin(cfg: &ProtocolConfig): Option<address> { cfg.pending_admin }
+
+public fun pending_accepted(cfg: &ProtocolConfig): bool { cfg.pending_accepted }
 
 public fun fee_bps(cfg: &ProtocolConfig): u64 { cfg.fee_bps }
 

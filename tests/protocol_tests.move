@@ -264,21 +264,126 @@ fun migrate_at_current_version_aborts() {
     abort 99
 }
 
-/// Cap handoff: the new holder can pull the levers.
+// === Cap handoff (propose -> accept -> execute) ===
+
+fun propose(s: &mut Scenario, to: address) {
+    s.next_tx(ADMIN);
+    let mut cfg = s.take_shared<ProtocolConfig>();
+    let cap = s.take_from_sender<ProtocolCap>();
+    protocol::propose_cap_transfer(&mut cfg, &cap, to);
+    s.return_to_sender(cap);
+    ts::return_shared(cfg);
+}
+
+fun accept_as(s: &mut Scenario, who: address) {
+    s.next_tx(who);
+    let mut cfg = s.take_shared<ProtocolConfig>();
+    protocol::accept_cap_transfer(&mut cfg, s.ctx());
+    ts::return_shared(cfg);
+}
+
+fun execute(s: &mut Scenario) {
+    s.next_tx(ADMIN);
+    let mut cfg = s.take_shared<ProtocolConfig>();
+    let cap = s.take_from_sender<ProtocolCap>();
+    protocol::execute_cap_transfer(&mut cfg, cap);
+    ts::return_shared(cfg);
+}
+
+/// The full handoff: the recipient counter-signs before the cap
+/// moves, and can pull the levers afterwards.
 #[test]
-fun cap_handoff_moves_admin_rights() {
+fun cap_handoff_three_steps_move_admin_rights() {
     let mut s = ts::begin(ADMIN);
     setup(&mut s);
-    s.next_tx(ADMIN);
-    let cap = s.take_from_sender<ProtocolCap>();
-    protocol::transfer_cap(cap, ALICE);
+    propose(&mut s, ALICE);
+    accept_as(&mut s, ALICE);
+    execute(&mut s);
 
     s.next_tx(ALICE);
     let mut cfg = s.take_shared<ProtocolConfig>();
+    // The proposal is consumed by execution.
+    assert!(protocol::pending_admin(&cfg).is_none());
     let cap = s.take_from_sender<ProtocolCap>();
     protocol::set_fee_bps(&mut cfg, &cap, 250);
     assert!(protocol::fee_bps(&cfg) == 250);
     s.return_to_sender(cap);
     ts::return_shared(cfg);
     s.end();
+}
+
+/// The typo scenario: only the proposed address can accept.
+#[test]
+#[expected_failure(abort_code = haneul_ip::protocol::ENotPendingAdmin)]
+fun accept_by_wrong_address_aborts() {
+    let mut s = ts::begin(ADMIN);
+    setup(&mut s);
+    propose(&mut s, ALICE);
+    accept_as(&mut s, CAROL);
+    abort 99
+}
+
+#[test]
+#[expected_failure(abort_code = haneul_ip::protocol::ENoPendingTransfer)]
+fun accept_without_proposal_aborts() {
+    let mut s = ts::begin(ADMIN);
+    setup(&mut s);
+    accept_as(&mut s, ALICE);
+    abort 99
+}
+
+/// The cap cannot move to an address that has not proven it can sign.
+#[test]
+#[expected_failure(abort_code = haneul_ip::protocol::ETransferNotAccepted)]
+fun execute_before_accept_aborts() {
+    let mut s = ts::begin(ADMIN);
+    setup(&mut s);
+    propose(&mut s, ALICE);
+    execute(&mut s);
+    abort 99
+}
+
+#[test]
+#[expected_failure(abort_code = haneul_ip::protocol::ENoPendingTransfer)]
+fun execute_without_proposal_aborts() {
+    let mut s = ts::begin(ADMIN);
+    setup(&mut s);
+    execute(&mut s);
+    abort 99
+}
+
+/// Cancelling voids the proposal and any acceptance already given.
+#[test]
+#[expected_failure(abort_code = haneul_ip::protocol::ENoPendingTransfer)]
+fun cancel_voids_accepted_proposal() {
+    let mut s = ts::begin(ADMIN);
+    setup(&mut s);
+    propose(&mut s, ALICE);
+    accept_as(&mut s, ALICE);
+
+    s.next_tx(ADMIN);
+    let mut cfg = s.take_shared<ProtocolConfig>();
+    let cap = s.take_from_sender<ProtocolCap>();
+    protocol::cancel_cap_transfer(&mut cfg, &cap);
+    assert!(protocol::pending_admin(&cfg).is_none());
+    assert!(!protocol::pending_accepted(&cfg));
+    s.return_to_sender(cap);
+    ts::return_shared(cfg);
+
+    execute(&mut s);
+    abort 99
+}
+
+/// Re-proposing voids the earlier recipient's acceptance: the new
+/// recipient must counter-sign for themselves.
+#[test]
+#[expected_failure(abort_code = haneul_ip::protocol::ETransferNotAccepted)]
+fun repropose_resets_acceptance() {
+    let mut s = ts::begin(ADMIN);
+    setup(&mut s);
+    propose(&mut s, ALICE);
+    accept_as(&mut s, ALICE);
+    propose(&mut s, CAROL);
+    execute(&mut s);
+    abort 99
 }
