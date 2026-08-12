@@ -38,6 +38,8 @@ Registration is self-attested: the chain records who claimed what and when, and 
 - **Absolute royalty shares.** An ancestor's share applies to every payment made to a descendant, at the percentage agreed when the link was created. Shares reached through multiple paths accumulate, and the combined burden can never exceed 100%.
 - **Slippage guards.** Minting and registration take caller-side limits (`max_fee`, `max_total_stack_bps`), because a licensor can change fees and shares between a buyer signing and the transaction executing.
 - **Mint-time snapshots.** A sold license keeps the terms it was sold under; later changes by the licensor apply only to future sales.
+- **Opt-in revenue currencies.** An asset only accepts deposits in coin types it opted into (its terms' currencies, plus any the owner adds), so third parties cannot bloat it with junk-coin pools. Stopping a currency never blocks claims on funds already received.
+- **Consent before money.** Approval-gated terms check the licensor's on-chain allowlist at mint time, so nobody can end up holding a paid license they were never allowed to use.
 
 ## Building and testing
 
@@ -48,7 +50,7 @@ haneul move build
 haneul move test
 ```
 
-The test suite currently covers 90 cases, 57 of which assert failure paths (wrong capabilities, exceeded limits, frozen assets, replayed evidence, and similar).
+The test suite currently covers 95 cases, 60 of which assert failure paths (wrong capabilities, exceeded limits, frozen assets, replayed evidence, and similar).
 
 ## Security
 

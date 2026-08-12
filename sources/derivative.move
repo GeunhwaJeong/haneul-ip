@@ -29,11 +29,11 @@ use haneul_ip::license::{Self, License};
 use haneul_ip::protocol::{Self, ProtocolConfig};
 use haneul_ip::terms::{Self, Terms, TermsRegistry};
 use std::string::String;
-use std::type_name;
+use std::type_name::{Self, TypeName};
 
 const EWrongLicense: u64 = 0;
 const EDerivativesNotAllowed: u64 = 1;
-const EApprovalRequired: u64 = 2;
+const ENotApprovedLicensee: u64 = 2;
 const ENotReciprocal: u64 = 3;
 const EDuplicateParent: u64 = 4;
 const ETooManyParents: u64 = 5;
@@ -64,6 +64,9 @@ public struct DerivativeBuilder {
     /// 0 = never; earliest constraint wins.
     expires_at_ms: u64,
     attached: VecSet<u64>,
+    /// Currencies of the terms used, inherited as the child's initial
+    /// accepted revenue currencies.
+    currencies: VecSet<TypeName>,
 }
 
 public struct ParentLinked has copy, drop {
@@ -82,12 +85,15 @@ public fun begin(name: String, content_hash: vector<u8>, uri: String): Derivativ
         stack_bps: 0,
         expires_at_ms: 0,
         attached: vec_set::empty(),
+        currencies: vec_set::empty(),
     }
 }
 
 /// Links a parent by burning a `License` minted from it. The license
 /// already embeds the agreed revenue share, so no payment happens
-/// here; it happened at mint.
+/// here; it happened at mint. Approval-gated terms need no extra
+/// check either: an approval allowlist is enforced at mint, so a
+/// license in hand IS the recorded consent.
 public fun add_parent(
     builder: &mut DerivativeBuilder,
     parent: &mut IPAsset,
@@ -95,25 +101,6 @@ public fun add_parent(
     license: License,
     clock: &Clock,
 ) {
-    let (licensor, terms_id, rev_share_bps) = license::burn(license);
-    assert!(licensor == object::id(parent), EWrongLicense);
-    let t = *terms::get(reg, terms_id);
-    // Approval-gated terms need the licensor's cap in the transaction.
-    assert!(!terms::derivatives_approval(&t), EApprovalRequired);
-    link(builder, parent, &t, terms_id, rev_share_bps, clock);
-}
-
-/// Same as `add_parent` for approval-gated terms: the parent owner's
-/// cap in the same transaction IS the approval.
-public fun add_parent_approved(
-    builder: &mut DerivativeBuilder,
-    parent: &mut IPAsset,
-    reg: &TermsRegistry,
-    license: License,
-    parent_cap: &IPOwnerCap,
-    clock: &Clock,
-) {
-    parent.assert_owner(parent_cap);
     let (licensor, terms_id, rev_share_bps) = license::burn(license);
     assert!(licensor == object::id(parent), EWrongLicense);
     let t = *terms::get(reg, terms_id);
@@ -137,7 +124,11 @@ public fun add_parent_direct<T>(
     assert!(parent.has_terms(terms_id), ETermsNotAttached);
     parent.assert_config_enabled(terms_id);
     let t = *terms::get(reg, terms_id);
-    assert!(!terms::derivatives_approval(&t), EApprovalRequired);
+    // No license object on this path, so the approval allowlist is
+    // checked here, before any money moves.
+    if (terms::derivatives_approval(&t)) {
+        assert!(parent.is_approved_licensee(ctx.sender()), ENotApprovedLicensee);
+    };
 
     let fee = parent.effective_minting_fee(terms_id, &t);
     if (fee > 0) {
@@ -171,6 +162,7 @@ public fun finish(
         stack_bps,
         expires_at_ms,
         attached,
+        currencies,
     } = builder;
     assert!(!parents.is_empty(), ENoParents);
     assert!(stack_bps <= BPS_DENOM, EStackTooHigh);
@@ -184,6 +176,7 @@ public fun finish(
         stack_bps,
         expires_at_ms,
         attached,
+        currencies,
         clock,
         ctx,
     )
@@ -234,9 +227,14 @@ fun link(
     };
 
     // The reciprocal rule: the child carries the terms it was born
-    // under, and only those.
+    // under, and only those. It also inherits their currencies as its
+    // accepted revenue currencies.
     if (!builder.attached.contains(&terms_id)) {
         builder.attached.insert(terms_id);
+    };
+    let currency = terms::currency(t);
+    if (!builder.currencies.contains(&currency)) {
+        builder.currencies.insert(currency);
     };
 
     parent.note_derivative();

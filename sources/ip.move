@@ -46,9 +46,18 @@ const EInvalidRevShare: u64 = 7;
 const ENothingToClaim: u64 = 8;
 const EConfigDisabled: u64 = 9;
 const ETermsNotFound: u64 = 10;
+const ECurrencyNotAccepted: u64 = 11;
+const ETooManyCurrencies: u64 = 12;
+const ETooManyApprovals: u64 = 13;
 
 const BPS_DENOM: u64 = 10_000;
 const CONTENT_HASH_LENGTH: u64 = 32;
+/// Bounds the `accepted_currencies` set so membership checks on the
+/// payment path stay cheap.
+const MAX_ACCEPTED_CURRENCIES: u64 = 16;
+/// Bounds the approval allowlist; an owner needing more should model
+/// the franchise as multiple IPs.
+const MAX_APPROVED_LICENSEES: u64 = 128;
 
 public struct IPAsset has key {
     id: UID,
@@ -79,6 +88,15 @@ public struct IPAsset has key {
     /// Per-terms owner overrides: the per-asset rider on the global
     /// terms sheet.
     configs: VecMap<u64, LicensingConfig>,
+    /// Coin types this IP accepts revenue in. Deposits in any other
+    /// type abort, so a third party cannot bloat this object with
+    /// junk-coin pools. Currencies of attached terms are accepted
+    /// automatically; the owner can add or stop more. Stopping never
+    /// touches existing pools, so funds can never be trapped.
+    accepted_currencies: VecSet<TypeName>,
+    /// Licensees pre-approved by the owner, for terms that require
+    /// approval. Consent is recorded on-chain BEFORE any money moves.
+    approved_licensees: VecSet<address>,
     /// Active upheld disputes. Non-zero freezes licensing, linking,
     /// payments and claims.
     tag_count: u64,
@@ -147,6 +165,26 @@ public struct Deposited has copy, drop {
     to_ancestors: u64,
 }
 
+public struct CurrencyAccepted has copy, drop {
+    ip: ID,
+    coin_type: TypeName,
+}
+
+public struct CurrencyStopped has copy, drop {
+    ip: ID,
+    coin_type: TypeName,
+}
+
+public struct LicenseeApproved has copy, drop {
+    ip: ID,
+    licensee: address,
+}
+
+public struct LicenseeRevoked has copy, drop {
+    ip: ID,
+    licensee: address,
+}
+
 // === Registration ===
 
 /// Registers a root IP. Shares the asset, returns the owner cap.
@@ -166,6 +204,7 @@ public fun register(
         0,
         0,
         vec_set::empty(),
+        vec_set::empty(),
         clock,
         ctx,
     );
@@ -183,6 +222,7 @@ public(package) fun new_derivative(
     royalty_stack_bps: u64,
     expires_at_ms: u64,
     attached_terms: VecSet<u64>,
+    accepted_currencies: VecSet<TypeName>,
     clock: &Clock,
     ctx: &mut TxContext,
 ): IPOwnerCap {
@@ -195,6 +235,7 @@ public(package) fun new_derivative(
         royalty_stack_bps,
         expires_at_ms,
         attached_terms,
+        accepted_currencies,
         clock,
         ctx,
     );
@@ -217,6 +258,7 @@ fun new_ip(
     royalty_stack_bps: u64,
     expires_at_ms: u64,
     attached_terms: VecSet<u64>,
+    accepted_currencies: VecSet<TypeName>,
     clock: &Clock,
     ctx: &mut TxContext,
 ): (IPOwnerCap, ID) {
@@ -235,6 +277,8 @@ fun new_ip(
         royalty_stack_bps,
         attached_terms,
         configs: vec_map::empty(),
+        accepted_currencies,
+        approved_licensees: vec_set::empty(),
         tag_count: 0,
         revenue: bag::new(ctx),
         licenses_minted: 0,
@@ -263,7 +307,54 @@ public fun attach_terms(
     assert!(terms::exists_(reg, terms_id), ETermsNotFound);
     assert!(!self.attached_terms.contains(&terms_id), ETermsAlreadyAttached);
     self.attached_terms.insert(terms_id);
+    // Pricing terms in a currency is the natural opt-in to receive it.
+    accept_currency_internal(self, terms::currency(terms::get(reg, terms_id)));
     event::emit(TermsAttached { ip: object::id(self), terms_id });
+}
+
+// === Revenue currencies and licensee approvals (owner-only) ===
+
+public fun accept_currency<T>(self: &mut IPAsset, cap: &IPOwnerCap) {
+    self.assert_owner(cap);
+    accept_currency_internal(self, type_name::with_defining_ids<T>());
+}
+
+/// Stops NEW deposits in `T`. Existing pools stay claimable forever,
+/// so stopping a currency can never trap funds.
+public fun stop_accepting_currency<T>(self: &mut IPAsset, cap: &IPOwnerCap) {
+    self.assert_owner(cap);
+    let currency = type_name::with_defining_ids<T>();
+    if (self.accepted_currencies.contains(&currency)) {
+        self.accepted_currencies.remove(&currency);
+        event::emit(CurrencyStopped { ip: object::id(self), coin_type: currency });
+    };
+}
+
+/// Grants `licensee` the standing consent that approval-gated terms
+/// require. This runs BEFORE the licensee pays anything, in the
+/// owner's own transaction; revocation only affects future mints,
+/// never a license already paid for.
+public fun approve_licensee(self: &mut IPAsset, cap: &IPOwnerCap, licensee: address) {
+    self.assert_owner(cap);
+    if (self.approved_licensees.contains(&licensee)) return;
+    assert!(self.approved_licensees.length() < MAX_APPROVED_LICENSEES, ETooManyApprovals);
+    self.approved_licensees.insert(licensee);
+    event::emit(LicenseeApproved { ip: object::id(self), licensee });
+}
+
+public fun revoke_licensee(self: &mut IPAsset, cap: &IPOwnerCap, licensee: address) {
+    self.assert_owner(cap);
+    if (self.approved_licensees.contains(&licensee)) {
+        self.approved_licensees.remove(&licensee);
+        event::emit(LicenseeRevoked { ip: object::id(self), licensee });
+    };
+}
+
+fun accept_currency_internal(self: &mut IPAsset, currency: TypeName) {
+    if (self.accepted_currencies.contains(&currency)) return;
+    assert!(self.accepted_currencies.length() < MAX_ACCEPTED_CURRENCIES, ETooManyCurrencies);
+    self.accepted_currencies.insert(currency);
+    event::emit(CurrencyAccepted { ip: object::id(self), coin_type: currency });
 }
 
 public fun set_licensing_config(
@@ -299,6 +390,12 @@ public(package) fun deposit<T>(self: &mut IPAsset, payment: Coin<T>) {
         payment.destroy_zero();
         return
     };
+    // The anti-junk gate: only currencies this IP opted into may
+    // create or grow pools on it.
+    assert!(
+        self.accepted_currencies.contains(&type_name::with_defining_ids<T>()),
+        ECurrencyNotAccepted,
+    );
     let ip_id = object::id(self);
     let ancestors = self.ancestors;
     ensure_pool<T>(self);
@@ -472,6 +569,14 @@ public fun royalty_stack_bps(self: &IPAsset): u64 { self.royalty_stack_bps }
 
 public fun has_terms(self: &IPAsset, terms_id: u64): bool {
     self.attached_terms.contains(&terms_id)
+}
+
+public fun is_currency_accepted<T>(self: &IPAsset): bool {
+    self.accepted_currencies.contains(&type_name::with_defining_ids<T>())
+}
+
+public fun is_approved_licensee(self: &IPAsset, licensee: address): bool {
+    self.approved_licensees.contains(&licensee)
 }
 
 public fun name(self: &IPAsset): String { self.name }

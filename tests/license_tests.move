@@ -26,6 +26,7 @@ use haneul_ip::test_helpers::{
     mint_license_to,
     mint_haneul,
     make_child,
+    approve,
 };
 
 const ADMIN: address = @0xAD;
@@ -43,7 +44,7 @@ fun mint_routes_fee_into_licensor_pool() {
     let terms_id = std_terms(&mut s, 1_000, 100);
     let (ip_id, _) = root_with_terms(&mut s, ALICE, 1, terms_id, &clock);
 
-    mint_license_to(&mut s, BOB, ip_id, terms_id, BOB, 100, &clock);
+    mint_license_to(&mut s, BOB, ip_id, terms_id, 100, &clock);
 
     s.next_tx(BOB);
     let asset = s.take_shared_by_id<IPAsset>(ip_id);
@@ -82,7 +83,9 @@ fun mint_fee_above_max_fee_aborts() {
     let reg = s.take_shared<TermsRegistry>();
     let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
     let mut payment = mint_haneul(&mut s, 500);
-    license::mint<HANEUL>(&cfg, &mut asset, &reg, terms_id, BOB, &mut payment, 150, &clock, s.ctx());
+    let license =
+        license::mint<HANEUL>(&cfg, &mut asset, &reg, terms_id, &mut payment, 150, &clock, s.ctx());
+    license::keep(license, s.ctx());
     abort 99
 }
 
@@ -94,7 +97,7 @@ fun mint_with_short_payment_aborts() {
     let clock = new_clock(&mut s);
     let terms_id = std_terms(&mut s, 1_000, 100);
     let (ip_id, _) = root_with_terms(&mut s, ALICE, 1, terms_id, &clock);
-    mint_license_to(&mut s, BOB, ip_id, terms_id, BOB, 99, &clock);
+    mint_license_to(&mut s, BOB, ip_id, terms_id, 99, &clock);
     abort 99
 }
 
@@ -113,7 +116,9 @@ fun mint_in_wrong_currency_aborts() {
     let reg = s.take_shared<TermsRegistry>();
     let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
     let mut payment = haneul::coin::mint_for_testing<USDX>(100, s.ctx());
-    license::mint<USDX>(&cfg, &mut asset, &reg, terms_id, BOB, &mut payment, 0, &clock, s.ctx());
+    let license =
+        license::mint<USDX>(&cfg, &mut asset, &reg, terms_id, &mut payment, 0, &clock, s.ctx());
+    license::keep(license, s.ctx());
     abort 99
 }
 
@@ -126,7 +131,7 @@ fun mint_on_unattached_terms_aborts() {
     let terms_id = std_terms(&mut s, 1_000, 100);
     let other_terms = std_terms(&mut s, 2_000, 0);
     let (ip_id, _) = root_with_terms(&mut s, ALICE, 1, terms_id, &clock);
-    mint_license_to(&mut s, BOB, ip_id, other_terms, BOB, 100, &clock);
+    mint_license_to(&mut s, BOB, ip_id, other_terms, 100, &clock);
     abort 99
 }
 
@@ -147,7 +152,7 @@ fun mint_on_disabled_config_aborts() {
     ts::return_shared(asset);
     s.return_to_sender(cap);
 
-    mint_license_to(&mut s, BOB, ip_id, terms_id, BOB, 100, &clock);
+    mint_license_to(&mut s, BOB, ip_id, terms_id, 100, &clock);
     abort 99
 }
 
@@ -164,7 +169,8 @@ fun mint_free_on_paid_terms_aborts() {
     let cfg = s.take_shared<ProtocolConfig>();
     let reg = s.take_shared<TermsRegistry>();
     let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
-    license::mint_free(&cfg, &mut asset, &reg, terms_id, BOB, &clock, s.ctx());
+    let license = license::mint_free(&cfg, &mut asset, &reg, terms_id, &clock, s.ctx());
+    license::keep(license, s.ctx());
     abort 99
 }
 
@@ -180,7 +186,8 @@ fun mint_free_works_on_free_terms() {
     let cfg = s.take_shared<ProtocolConfig>();
     let reg = s.take_shared<TermsRegistry>();
     let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
-    license::mint_free(&cfg, &mut asset, &reg, terms_id, BOB, &clock, s.ctx());
+    let license = license::mint_free(&cfg, &mut asset, &reg, terms_id, &clock, s.ctx());
+    license::keep(license, s.ctx());
     ts::return_shared(cfg);
     ts::return_shared(reg);
     ts::return_shared(asset);
@@ -204,7 +211,7 @@ fun mint_on_tagged_ip_aborts() {
     let terms_id = std_terms(&mut s, 1_000, 0);
     let (ip_id, _) = root_with_terms(&mut s, ALICE, 1, terms_id, &clock);
     tag_ip(&mut s, ip_id, 9, &clock);
-    mint_license_to(&mut s, BOB, ip_id, terms_id, BOB, 0, &clock);
+    mint_license_to(&mut s, BOB, ip_id, terms_id, 0, &clock);
     abort 99
 }
 
@@ -218,7 +225,7 @@ fun license_snapshot_survives_config_change() {
     let terms_id = std_terms(&mut s, 1_000, 0);
     let (ip_id, cap_id) = root_with_terms(&mut s, ALICE, 1, terms_id, &clock);
 
-    mint_license_to(&mut s, BOB, ip_id, terms_id, BOB, 0, &clock);
+    mint_license_to(&mut s, BOB, ip_id, terms_id, 0, &clock);
 
     s.next_tx(ALICE);
     let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
@@ -242,7 +249,7 @@ fun transferable_license_changes_hands() {
     let clock = new_clock(&mut s);
     let terms_id = std_terms(&mut s, 1_000, 0);
     let (ip_id, _) = root_with_terms(&mut s, ALICE, 1, terms_id, &clock);
-    mint_license_to(&mut s, BOB, ip_id, terms_id, BOB, 0, &clock);
+    mint_license_to(&mut s, BOB, ip_id, terms_id, 0, &clock);
 
     s.next_tx(BOB);
     let license = s.take_from_sender<License>();
@@ -266,11 +273,50 @@ fun non_transferable_license_cannot_move() {
     let clock = new_clock(&mut s);
     let terms_id = custom_terms(&mut s, false, 0, true, 1_000, true, false, true, 0);
     let (ip_id, _) = root_with_terms(&mut s, ALICE, 1, terms_id, &clock);
-    mint_license_to(&mut s, BOB, ip_id, terms_id, BOB, 0, &clock);
+    mint_license_to(&mut s, BOB, ip_id, terms_id, 0, &clock);
 
     s.next_tx(BOB);
     let license = s.take_from_sender<License>();
     license::transfer_license(license, CAROL);
+    abort 99
+}
+
+/// Approval-gated terms: an unapproved buyer cannot even mint, so no
+/// money can ever be taken for a license that might never be usable.
+#[test]
+#[expected_failure(abort_code = haneul_ip::license::ENotApprovedLicensee)]
+fun unapproved_mint_on_approval_terms_aborts() {
+    let mut s = ts::begin(ADMIN);
+    setup(&mut s);
+    let clock = new_clock(&mut s);
+    let approval_terms = custom_terms(&mut s, true, 0, true, 1_000, true, true, true, 0);
+    let (ip_id, _) = root_with_terms(&mut s, ALICE, 1, approval_terms, &clock);
+    mint_license_to(&mut s, BOB, ip_id, approval_terms, 0, &clock);
+    abort 99
+}
+
+/// Revocation closes the gate for future mints; the license already
+/// minted under approval stays valid (it was paid for under consent).
+#[test]
+#[expected_failure(abort_code = haneul_ip::license::ENotApprovedLicensee)]
+fun revoked_licensee_cannot_mint_again() {
+    let mut s = ts::begin(ADMIN);
+    setup(&mut s);
+    let clock = new_clock(&mut s);
+    let approval_terms = custom_terms(&mut s, true, 0, true, 1_000, true, true, true, 0);
+    let (ip_id, cap_id) = root_with_terms(&mut s, ALICE, 1, approval_terms, &clock);
+
+    approve(&mut s, ALICE, ip_id, cap_id, BOB);
+    mint_license_to(&mut s, BOB, ip_id, approval_terms, 0, &clock);
+
+    s.next_tx(ALICE);
+    let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
+    let cap = s.take_from_sender_by_id<IPOwnerCap>(cap_id);
+    ip::revoke_licensee(&mut asset, &cap, BOB);
+    ts::return_shared(asset);
+    s.return_to_sender(cap);
+
+    mint_license_to(&mut s, BOB, ip_id, approval_terms, 0, &clock);
     abort 99
 }
 
@@ -287,6 +333,6 @@ fun derivative_minting_non_reciprocal_terms_aborts() {
     let (root_ip, _) = root_with_terms(&mut s, ALICE, 1, terms_id, &clock);
     let (child_ip, _) = make_child(&mut s, BOB, root_ip, terms_id, 0, 2, &clock);
 
-    mint_license_to(&mut s, CAROL, child_ip, terms_id, CAROL, 0, &clock);
+    mint_license_to(&mut s, CAROL, child_ip, terms_id, 0, &clock);
     abort 99
 }

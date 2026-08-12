@@ -27,6 +27,7 @@ use haneul_ip::test_helpers::{
     mint_license_to,
     mint_haneul,
     make_child,
+    approve,
 };
 
 const ADMIN: address = @0xAD;
@@ -162,7 +163,7 @@ fun license_from_other_ip_aborts() {
     let terms_id = std_terms(&mut s, 1_000, 0);
     let (ip_a, _) = root_with_terms(&mut s, ALICE, 1, terms_id, &clock);
     let (ip_b, _) = root_with_terms(&mut s, ALICE, 2, terms_id, &clock);
-    mint_license_to(&mut s, BOB, ip_a, terms_id, BOB, 0, &clock);
+    mint_license_to(&mut s, BOB, ip_a, terms_id, 0, &clock);
 
     s.next_tx(BOB);
     let reg = s.take_shared<TermsRegistry>();
@@ -181,8 +182,8 @@ fun same_parent_twice_aborts() {
     let clock = new_clock(&mut s);
     let terms_id = std_terms(&mut s, 1_000, 0);
     let (root_ip, _) = root_with_terms(&mut s, ALICE, 1, terms_id, &clock);
-    mint_license_to(&mut s, BOB, root_ip, terms_id, BOB, 0, &clock);
-    mint_license_to(&mut s, BOB, root_ip, terms_id, BOB, 0, &clock);
+    mint_license_to(&mut s, BOB, root_ip, terms_id, 0, &clock);
+    mint_license_to(&mut s, BOB, root_ip, terms_id, 0, &clock);
 
     s.next_tx(BOB);
     let reg = s.take_shared<TermsRegistry>();
@@ -218,8 +219,8 @@ fun combined_stack_above_100_percent_aborts() {
     let heavy_terms = std_terms(&mut s, 6_000, 0);
     let (ip_a, _) = root_with_terms(&mut s, ALICE, 1, heavy_terms, &clock);
     let (ip_b, _) = root_with_terms(&mut s, ALICE, 2, heavy_terms, &clock);
-    mint_license_to(&mut s, BOB, ip_a, heavy_terms, BOB, 0, &clock);
-    mint_license_to(&mut s, BOB, ip_b, heavy_terms, BOB, 0, &clock);
+    mint_license_to(&mut s, BOB, ip_a, heavy_terms, 0, &clock);
+    mint_license_to(&mut s, BOB, ip_b, heavy_terms, 0, &clock);
 
     s.next_tx(BOB);
     let reg = s.take_shared<TermsRegistry>();
@@ -247,7 +248,7 @@ fun stack_above_registrant_max_aborts() {
     let clock = new_clock(&mut s);
     let terms_id = std_terms(&mut s, 1_000, 0);
     let (root_ip, _) = root_with_terms(&mut s, ALICE, 1, terms_id, &clock);
-    mint_license_to(&mut s, BOB, root_ip, terms_id, BOB, 0, &clock);
+    mint_license_to(&mut s, BOB, root_ip, terms_id, 0, &clock);
 
     s.next_tx(BOB);
     let reg = s.take_shared<TermsRegistry>();
@@ -270,7 +271,7 @@ fun linking_no_derivatives_terms_aborts() {
     let clock = new_clock(&mut s);
     let usage_only = custom_terms(&mut s, true, 0, true, 0, false, false, false, 0);
     let (root_ip, _) = root_with_terms(&mut s, ALICE, 1, usage_only, &clock);
-    mint_license_to(&mut s, BOB, root_ip, usage_only, BOB, 0, &clock);
+    mint_license_to(&mut s, BOB, root_ip, usage_only, 0, &clock);
 
     s.next_tx(BOB);
     let reg = s.take_shared<TermsRegistry>();
@@ -281,56 +282,58 @@ fun linking_no_derivatives_terms_aborts() {
     abort 99
 }
 
-/// Approval-gated terms refuse the plain path...
+/// Approval-gated terms block the direct (no-license) path for an
+/// unapproved registrant, before any money moves.
 #[test]
-#[expected_failure(abort_code = haneul_ip::derivative::EApprovalRequired)]
-fun approval_terms_via_plain_add_aborts() {
+#[expected_failure(abort_code = haneul_ip::derivative::ENotApprovedLicensee)]
+fun approval_terms_block_unapproved_direct_link() {
     let mut s = ts::begin(ADMIN);
     setup(&mut s);
     let clock = new_clock(&mut s);
     let approval_terms = custom_terms(&mut s, true, 0, true, 1_000, true, true, true, 0);
     let (root_ip, _) = root_with_terms(&mut s, ALICE, 1, approval_terms, &clock);
-    mint_license_to(&mut s, BOB, root_ip, approval_terms, BOB, 0, &clock);
-
-    s.next_tx(BOB);
-    let reg = s.take_shared<TermsRegistry>();
-    let mut parent = s.take_shared_by_id<IPAsset>(root_ip);
-    let license = s.take_from_sender<License>();
-    let mut builder = derivative::begin(str(b"x"), hash(9), str(b""));
-    derivative::add_parent(&mut builder, &mut parent, &reg, license, &clock);
+    make_child_direct(&mut s, BOB, root_ip, approval_terms, 0, 0, 0, 9, &clock);
     abort 99
 }
 
-/// ...and accept the approved path: the parent owner's cap in the
-/// same transaction IS the approval.
+/// The approval flow, two single-signer transactions: the owner puts
+/// the licensee on the allowlist first, then the licensee buys and
+/// registers in one transaction of their own.
 #[test]
-fun approval_terms_with_parent_cap_links() {
+fun approved_licensee_buys_and_links_in_one_tx() {
     let mut s = ts::begin(ADMIN);
     setup(&mut s);
     let clock = new_clock(&mut s);
     let approval_terms = custom_terms(&mut s, true, 0, true, 1_000, true, true, true, 0);
     let (root_ip, root_cap_id) = root_with_terms(&mut s, ALICE, 1, approval_terms, &clock);
-    mint_license_to(&mut s, ALICE, root_ip, approval_terms, ALICE, 0, &clock);
 
-    // ALICE (parent owner) co-drives the registration: license +
-    // parent cap in one transaction.
-    s.next_tx(ALICE);
-    let reg = s.take_shared<TermsRegistry>();
-    let mut parent = s.take_shared_by_id<IPAsset>(root_ip);
-    let license = s.take_from_sender<License>();
-    let parent_cap = s.take_from_sender_by_id<IPOwnerCap>(root_cap_id);
-    let mut builder = derivative::begin(str(b"approved"), hash(9), str(b""));
-    derivative::add_parent_approved(&mut builder, &mut parent, &reg, license, &parent_cap, &clock);
-    let cap = derivative::finish(builder, 0, &clock, s.ctx());
-    let child_ip = ip::cap_ip(&cap);
-    transfer::public_transfer(cap, ALICE);
-    s.return_to_sender(parent_cap);
-    ts::return_shared(reg);
-    ts::return_shared(parent);
+    approve(&mut s, ALICE, root_ip, root_cap_id, BOB);
+    // make_child is mint -> add_parent -> finish in one transaction.
+    let (child_ip, _) = make_child(&mut s, BOB, root_ip, approval_terms, 0, 9, &clock);
 
-    s.next_tx(ALICE);
+    s.next_tx(BOB);
     let child = s.take_shared_by_id<IPAsset>(child_ip);
     assert!(child.is_ancestor_of(root_ip));
+    ts::return_shared(child);
+    clock.destroy_for_testing();
+    s.end();
+}
+
+/// The child inherits its terms' currency as an accepted revenue
+/// currency; everything else stays locked out.
+#[test]
+fun child_inherits_terms_currency() {
+    let mut s = ts::begin(ADMIN);
+    setup(&mut s);
+    let clock = new_clock(&mut s);
+    let terms_id = std_terms(&mut s, 1_000, 0);
+    let (root_ip, _) = root_with_terms(&mut s, ALICE, 1, terms_id, &clock);
+    let (child_ip, _) = make_child(&mut s, BOB, root_ip, terms_id, 0, 2, &clock);
+
+    s.next_tx(BOB);
+    let child = s.take_shared_by_id<IPAsset>(child_ip);
+    assert!(ip::is_currency_accepted<HANEUL>(&child));
+    assert!(!ip::is_currency_accepted<haneul_ip::test_helpers::USDX>(&child));
     ts::return_shared(child);
     clock.destroy_for_testing();
     s.end();

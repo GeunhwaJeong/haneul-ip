@@ -52,8 +52,9 @@ public struct Terms has store, copy, drop {
     commercial_rev_share_bps: u64,
     derivatives_allowed: bool,
     derivatives_attribution: bool,
-    /// If set, linking a derivative requires the licensor's cap
-    /// (their signature in the same transaction).
+    /// If set, minting a license or linking a derivative requires the
+    /// licensee to be on the licensor's on-chain allowlist first
+    /// (`ip::approve_licensee`). Consent comes before money.
     derivatives_approval: bool,
     /// If set, a derivative may itself license these same terms
     /// onward (derivatives of derivatives).

@@ -4,10 +4,21 @@
 /// The license object: a right, sold by an IP, to register a
 /// derivative (or simply to hold as proof of licensed use).
 ///
+/// `mint` RETURNS the license instead of delivering it, so one
+/// transaction can buy a license and immediately consume it to
+/// register a derivative. Call `keep` to take custody when holding is
+/// the goal.
+///
 /// The object is `key`-only, so it can never move through generic
-/// transfer at all; the ONLY way it changes hands is
-/// `transfer_license` below, which checks the transferable flag.
-/// Non-transferability is a missing ability, not a hook.
+/// transfer at all; the only ways it moves are `keep` (to the
+/// transaction sender, the initial delivery) and `transfer_license`,
+/// which checks the transferable flag. Non-transferability is a
+/// missing ability, not a hook.
+///
+/// Approval-gated terms are enforced HERE, at mint time: the buyer
+/// must already be on the licensor's allowlist, so consent exists
+/// on-chain before any money moves. No one can end up holding a paid
+/// license they were never allowed to use.
 ///
 /// Terms values (fee, revenue share) are snapshotted at mint time:
 /// the licensor changing their config later must not rewrite a
@@ -19,7 +30,7 @@ use haneul::coin::Coin;
 use haneul::event;
 use haneul_ip::ip::{Self, IPAsset};
 use haneul_ip::protocol::{Self, ProtocolConfig};
-use haneul_ip::terms::{Self, TermsRegistry};
+use haneul_ip::terms::{Self, Terms, TermsRegistry};
 use std::type_name;
 
 const ETermsNotAttached: u64 = 0;
@@ -29,6 +40,7 @@ const EFeeAboveMax: u64 = 3;
 const ENotTransferable: u64 = 4;
 const EInsufficientPayment: u64 = 5;
 const EFeeRequired: u64 = 6;
+const ENotApprovedLicensee: u64 = 7;
 
 public struct License has key {
     id: UID,
@@ -43,7 +55,7 @@ public struct LicenseMinted has copy, drop {
     license: ID,
     licensor: ID,
     terms_id: u64,
-    receiver: address,
+    minter: address,
     fee_paid: u64,
     rev_share_bps: u64,
 }
@@ -54,7 +66,8 @@ public struct LicenseTransferred has copy, drop {
 }
 
 /// Mints one license against terms attached to `licensor_ip`, paying
-/// the effective minting fee out of `payment`.
+/// the effective minting fee out of `payment`, and returns it for the
+/// caller to keep or consume.
 ///
 /// `max_fee` is a slippage guard (0 = no limit): the licensor can
 /// change the fee via `set_licensing_config` between the buyer
@@ -69,26 +82,16 @@ public fun mint<T>(
     licensor_ip: &mut IPAsset,
     reg: &TermsRegistry,
     terms_id: u64,
-    receiver: address,
     payment: &mut Coin<T>,
     max_fee: u64,
     clock: &Clock,
     ctx: &mut TxContext,
-): ID {
-    protocol::assert_running(cfg);
-    ip::assert_alive(licensor_ip, clock);
-    assert!(licensor_ip.has_terms(terms_id), ETermsNotAttached);
-    licensor_ip.assert_config_enabled(terms_id);
-    let t = terms::get(reg, terms_id);
-    // A derivative only re-licenses terms marked reciprocal
-    // (derivatives of derivatives need the parent's permission chain).
-    if (licensor_ip.is_derivative()) {
-        assert!(terms::derivatives_reciprocal(t), ENotReciprocal);
-    };
+): License {
+    let t = verify_mint(cfg, licensor_ip, reg, terms_id, clock, ctx);
 
-    let fee = licensor_ip.effective_minting_fee(terms_id, t);
+    let fee = licensor_ip.effective_minting_fee(terms_id, &t);
     if (fee > 0) {
-        assert!(type_name::with_defining_ids<T>() == terms::currency(t), EWrongCurrency);
+        assert!(type_name::with_defining_ids<T>() == terms::currency(&t), EWrongCurrency);
         assert!(max_fee == 0 || fee <= max_fee, EFeeAboveMax);
         assert!(payment.value() >= fee, EInsufficientPayment);
         let mut fee_coin = payment.split(fee, ctx);
@@ -96,25 +99,7 @@ public fun mint<T>(
         licensor_ip.deposit(fee_coin);
     };
 
-    let license = License {
-        id: object::new(ctx),
-        licensor: object::id(licensor_ip),
-        terms_id,
-        rev_share_bps: licensor_ip.effective_rev_share_bps(terms_id, t),
-        transferable: terms::transferable(t),
-    };
-    let license_id = object::id(&license);
-    licensor_ip.note_license_minted();
-    event::emit(LicenseMinted {
-        license: license_id,
-        licensor: object::id(licensor_ip),
-        terms_id,
-        receiver,
-        fee_paid: fee,
-        rev_share_bps: license.rev_share_bps,
-    });
-    transfer::transfer(license, receiver);
-    license_id
+    issue(licensor_ip, terms_id, &t, fee, ctx)
 }
 
 /// Convenience path for free terms; no payment coin needed.
@@ -123,20 +108,69 @@ public fun mint_free(
     licensor_ip: &mut IPAsset,
     reg: &TermsRegistry,
     terms_id: u64,
-    receiver: address,
     clock: &Clock,
     ctx: &mut TxContext,
-): ID {
+): License {
+    let t = verify_mint(cfg, licensor_ip, reg, terms_id, clock, ctx);
+    assert!(licensor_ip.effective_minting_fee(terms_id, &t) == 0, EFeeRequired);
+    issue(licensor_ip, terms_id, &t, 0, ctx)
+}
+
+/// Takes custody of a license as the transaction sender. Initial
+/// delivery to the buyer is not a transfer between parties, so the
+/// transferable flag is not consulted.
+public fun keep(license: License, ctx: &TxContext) {
+    transfer::transfer(license, ctx.sender());
+}
+
+/// The only way a `License` moves between parties.
+public fun transfer_license(license: License, to: address) {
+    assert!(license.transferable, ENotTransferable);
+    event::emit(LicenseTransferred { license: object::id(&license), to });
+    transfer::transfer(license, to);
+}
+
+/// Consumed by `derivative::add_parent`; returns what linking needs.
+public(package) fun burn(license: License): (ID, u64, u64) {
+    let License { id, licensor, terms_id, rev_share_bps, transferable: _ } = license;
+    id.delete();
+    (licensor, terms_id, rev_share_bps)
+}
+
+/// The gates every mint passes, in one place. Returns the terms by
+/// copy so fee and snapshot logic read one consistent version.
+fun verify_mint(
+    cfg: &ProtocolConfig,
+    licensor_ip: &IPAsset,
+    reg: &TermsRegistry,
+    terms_id: u64,
+    clock: &Clock,
+    ctx: &TxContext,
+): Terms {
     protocol::assert_running(cfg);
     ip::assert_alive(licensor_ip, clock);
     assert!(licensor_ip.has_terms(terms_id), ETermsNotAttached);
     licensor_ip.assert_config_enabled(terms_id);
-    let t = terms::get(reg, terms_id);
+    let t = *terms::get(reg, terms_id);
+    // A derivative only re-licenses terms marked reciprocal
+    // (derivatives of derivatives need the permission to flow down).
     if (licensor_ip.is_derivative()) {
-        assert!(terms::derivatives_reciprocal(t), ENotReciprocal);
+        assert!(terms::derivatives_reciprocal(&t), ENotReciprocal);
     };
-    assert!(licensor_ip.effective_minting_fee(terms_id, t) == 0, EFeeRequired);
+    // Approval-gated terms: consent must already be on-chain.
+    if (terms::derivatives_approval(&t)) {
+        assert!(licensor_ip.is_approved_licensee(ctx.sender()), ENotApprovedLicensee);
+    };
+    t
+}
 
+fun issue(
+    licensor_ip: &mut IPAsset,
+    terms_id: u64,
+    t: &Terms,
+    fee_paid: u64,
+    ctx: &mut TxContext,
+): License {
     let license = License {
         id: object::new(ctx),
         licensor: object::id(licensor_ip),
@@ -144,32 +178,16 @@ public fun mint_free(
         rev_share_bps: licensor_ip.effective_rev_share_bps(terms_id, t),
         transferable: terms::transferable(t),
     };
-    let license_id = object::id(&license);
     licensor_ip.note_license_minted();
     event::emit(LicenseMinted {
-        license: license_id,
+        license: object::id(&license),
         licensor: object::id(licensor_ip),
         terms_id,
-        receiver,
-        fee_paid: 0,
+        minter: ctx.sender(),
+        fee_paid,
         rev_share_bps: license.rev_share_bps,
     });
-    transfer::transfer(license, receiver);
-    license_id
-}
-
-/// The only way a `License` changes hands.
-public fun transfer_license(license: License, to: address) {
-    assert!(license.transferable, ENotTransferable);
-    event::emit(LicenseTransferred { license: object::id(&license), to });
-    transfer::transfer(license, to);
-}
-
-/// Consumed by `derivative::add_parent*`; returns what linking needs.
-public(package) fun burn(license: License): (ID, u64, u64) {
-    let License { id, licensor, terms_id, rev_share_bps, transferable: _ } = license;
-    id.delete();
-    (licensor, terms_id, rev_share_bps)
+    license
 }
 
 public fun licensor(license: &License): ID { license.licensor }

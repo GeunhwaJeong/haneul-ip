@@ -141,14 +141,13 @@ public fun root_with_terms(
     (ip_id, cap_id)
 }
 
-/// `buyer` mints a license from `ip_id` to `receiver`, paying out of
-/// a fresh coin of `pay_amount` (leftover returned to buyer).
+/// `buyer` mints a license from `ip_id` and keeps it, paying out of a
+/// fresh coin of `pay_amount` (leftover returned to buyer).
 public fun mint_license_to(
     s: &mut Scenario,
     buyer: address,
     ip_id: ID,
     terms_id: u64,
-    receiver: address,
     pay_amount: u64,
     clock: &Clock,
 ): ID {
@@ -157,17 +156,18 @@ public fun mint_license_to(
     let reg = s.take_shared<TermsRegistry>();
     let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
     let mut payment = mint_haneul(s, pay_amount);
-    let license_id = license::mint<HANEUL>(
+    let license = license::mint<HANEUL>(
         &cfg,
         &mut asset,
         &reg,
         terms_id,
-        receiver,
         &mut payment,
         0,
         clock,
         s.ctx(),
     );
+    let license_id = object::id(&license);
+    license::keep(license, s.ctx());
     transfer::public_transfer(payment, buyer);
     ts::return_shared(cfg);
     ts::return_shared(reg);
@@ -175,8 +175,10 @@ public fun mint_license_to(
     license_id
 }
 
-/// Full derivative flow over the license path: `creator` buys a
-/// license from `parent_ip` and registers a child with it.
+/// Full derivative flow over the license path, IN ONE TRANSACTION:
+/// `creator` buys the license and immediately consumes it to register
+/// the child (mint -> add_parent -> finish). This is the composable
+/// flow that `mint` returning the `License` exists for.
 /// Returns (child ip id, child cap id).
 public fun make_child(
     s: &mut Scenario,
@@ -187,20 +189,48 @@ public fun make_child(
     seed: u8,
     clock: &Clock,
 ): (ID, ID) {
-    mint_license_to(s, creator, parent_ip, terms_id, creator, pay_amount, clock);
     s.next_tx(creator);
+    let cfg = s.take_shared<ProtocolConfig>();
     let reg = s.take_shared<TermsRegistry>();
     let mut parent = s.take_shared_by_id<IPAsset>(parent_ip);
-    let license = s.take_from_sender<License>();
+    let mut payment = mint_haneul(s, pay_amount);
+    let license = license::mint<HANEUL>(
+        &cfg,
+        &mut parent,
+        &reg,
+        terms_id,
+        &mut payment,
+        0,
+        clock,
+        s.ctx(),
+    );
     let mut builder = derivative::begin(str(b"child"), hash(seed), str(b""));
     derivative::add_parent(&mut builder, &mut parent, &reg, license, clock);
     let cap = derivative::finish(builder, 0, clock, s.ctx());
     let child_ip = ip::cap_ip(&cap);
     let cap_id = object::id(&cap);
     transfer::public_transfer(cap, creator);
+    transfer::public_transfer(payment, creator);
+    ts::return_shared(cfg);
     ts::return_shared(reg);
     ts::return_shared(parent);
     (child_ip, cap_id)
+}
+
+/// Owner of `ip_id` puts `licensee` on the approval allowlist.
+public fun approve(
+    s: &mut Scenario,
+    owner: address,
+    ip_id: ID,
+    cap_id: ID,
+    licensee: address,
+) {
+    s.next_tx(owner);
+    let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
+    let cap = s.take_from_sender_by_id<IPOwnerCap>(cap_id);
+    ip::approve_licensee(&mut asset, &cap, licensee);
+    s.return_to_sender(cap);
+    ts::return_shared(asset);
 }
 
 /// Pays `amount` HANEUL of royalties to `ip_id`.

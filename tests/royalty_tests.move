@@ -161,7 +161,8 @@ fun rounding_dust_goes_to_owner() {
     s.end();
 }
 
-/// Pools are per coin type and independent.
+/// Pools are per coin type and independent. The child accepted
+/// HANEUL by inheritance; USDX has to be opted into by its owner.
 #[test]
 fun multi_currency_pools_are_independent() {
     let mut s = ts::begin(ADMIN);
@@ -169,10 +170,16 @@ fun multi_currency_pools_are_independent() {
     let clock = new_clock(&mut s);
     let terms_id = std_terms(&mut s, 1_000, 0);
     let (root_ip, root_cap_id) = root_with_terms(&mut s, ALICE, 1, terms_id, &clock);
-    let (child_ip, _) = make_child(&mut s, BOB, root_ip, terms_id, 0, 2, &clock);
+    let (child_ip, child_cap_id) = make_child(&mut s, BOB, root_ip, terms_id, 0, 2, &clock);
+
+    s.next_tx(BOB);
+    let mut child = s.take_shared_by_id<IPAsset>(child_ip);
+    let child_cap = s.take_from_sender_by_id<IPOwnerCap>(child_cap_id);
+    ip::accept_currency<USDX>(&mut child, &child_cap);
+    ts::return_shared(child);
+    s.return_to_sender(child_cap);
 
     pay_royalty(&mut s, CAROL, child_ip, 1_000, &clock);
-    // Royalties accept any coin type; pay USDX directly.
     s.next_tx(CAROL);
     let cfg = s.take_shared<ProtocolConfig>();
     let mut child = s.take_shared_by_id<IPAsset>(child_ip);
@@ -255,6 +262,49 @@ fun ancestor_claim_by_non_ancestor_aborts() {
     pay_royalty(&mut s, ADMIN, child_ip, 1_000, &clock);
     claim_ancestor(&mut s, CAROL, child_ip, stranger_cap_id);
     abort 99
+}
+
+/// The anti-junk gate: a coin type the IP never opted into cannot
+/// create a pool on it.
+#[test]
+#[expected_failure(abort_code = haneul_ip::ip::ECurrencyNotAccepted)]
+fun payment_in_unaccepted_currency_aborts() {
+    let mut s = ts::begin(ADMIN);
+    setup(&mut s);
+    let clock = new_clock(&mut s);
+    let terms_id = std_terms(&mut s, 1_000, 0);
+    let (ip_id, _) = root_with_terms(&mut s, ALICE, 1, terms_id, &clock);
+
+    s.next_tx(CAROL);
+    let cfg = s.take_shared<ProtocolConfig>();
+    let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
+    let junk = haneul::coin::mint_for_testing<USDX>(1, s.ctx());
+    royalty::pay<USDX>(&cfg, &mut asset, junk, &clock, s.ctx());
+    abort 99
+}
+
+/// Stopping a currency blocks new deposits but never claims: funds
+/// already in the pool stay withdrawable.
+#[test]
+fun stopped_currency_stays_claimable() {
+    let mut s = ts::begin(ADMIN);
+    setup(&mut s);
+    let clock = new_clock(&mut s);
+    let terms_id = std_terms(&mut s, 1_000, 0);
+    let (ip_id, cap_id) = root_with_terms(&mut s, ALICE, 1, terms_id, &clock);
+    pay_royalty(&mut s, CAROL, ip_id, 1_000, &clock);
+
+    s.next_tx(ALICE);
+    let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
+    let cap = s.take_from_sender_by_id<IPOwnerCap>(cap_id);
+    ip::stop_accepting_currency<HANEUL>(&mut asset, &cap);
+    assert!(!ip::is_currency_accepted<HANEUL>(&asset));
+    ts::return_shared(asset);
+    s.return_to_sender(cap);
+
+    assert!(claim_owner(&mut s, ALICE, ip_id, cap_id) == 1_000);
+    clock.destroy_for_testing();
+    s.end();
 }
 
 #[test]
