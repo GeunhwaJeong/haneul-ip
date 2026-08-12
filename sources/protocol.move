@@ -13,6 +13,14 @@
 /// 100%. What rate (if any) to ever charge, and whether to promise a
 /// lower cap, is deliberately not decided here; that is business
 /// policy, not mechanism.
+///
+/// The version gate is the third such one-way door. Every
+/// state-writing entry point in the package asserts that the shared
+/// object it touches matches the package VERSION, so after an upgrade
+/// the stale entry points of the previous package can be shut off by
+/// bumping the stored version (`migrate`). Only the singleton objects
+/// are gated; see `IPAsset.version` in `ip.move` for why the assets
+/// themselves are not.
 module haneul_ip::protocol;
 
 use haneul::coin::Coin;
@@ -20,11 +28,19 @@ use haneul::event;
 
 const EPaused: u64 = 0;
 const EFeeAboveMax: u64 = 1;
+const EWrongVersion: u64 = 2;
+const ENotUpgrade: u64 = 3;
 
 const BPS_DENOM: u64 = 10_000;
+/// Bumped together with any package upgrade that must invalidate the
+/// previous package's entry points.
+const VERSION: u64 = 1;
 
 public struct ProtocolConfig has key {
     id: UID,
+    /// Package version this object was last migrated to. Checked by
+    /// every state-writing entry point; bumped by `migrate` after a
+    /// package upgrade.
     version: u64,
     /// Receives the protocol's cut of every payment.
     treasury: address,
@@ -46,6 +62,7 @@ public struct ProtocolConfig has key {
 public struct ProtocolCap has key { id: UID }
 
 public struct FeeSet has copy, drop { fee_bps: u64 }
+public struct ConfigMigrated has copy, drop { version: u64 }
 public struct TreasurySet has copy, drop { treasury: address }
 public struct PauseSet has copy, drop { paused: bool }
 public struct FeeCollected has copy, drop { amount: u64 }
@@ -53,7 +70,7 @@ public struct FeeCollected has copy, drop { amount: u64 }
 fun init(ctx: &mut TxContext) {
     transfer::share_object(ProtocolConfig {
         id: object::new(ctx),
-        version: 1,
+        version: VERSION,
         treasury: ctx.sender(),
         fee_bps: 0,
         paused: false,
@@ -63,7 +80,17 @@ fun init(ctx: &mut TxContext) {
 
 /// Every money-moving function in the package calls this first.
 public fun assert_running(cfg: &ProtocolConfig) {
+    assert_current_version(cfg);
     assert!(!cfg.paused, EPaused);
+}
+
+/// The version gate alone. State-writing paths that must not freeze
+/// on pause (registration is not a money path) call this directly.
+/// After a package upgrade the previous package's entry points stay
+/// callable forever; bumping the stored version via `migrate` is what
+/// shuts them off, and this assert is where they stop.
+public fun assert_current_version(cfg: &ProtocolConfig) {
+    assert!(cfg.version == VERSION, EWrongVersion);
 }
 
 /// Takes the protocol's cut out of `payment` and sends it to the
@@ -107,6 +134,17 @@ public fun transfer_cap(cap: ProtocolCap, to: address) {
     transfer::transfer(cap, to);
 }
 
+/// Brings a config left behind by a package upgrade up to the
+/// current version, unfreezing the gated entry points. Rejects a
+/// same-version call so it cannot be replayed.
+public fun migrate(cfg: &mut ProtocolConfig, _cap: &ProtocolCap) {
+    assert!(cfg.version < VERSION, ENotUpgrade);
+    cfg.version = VERSION;
+    event::emit(ConfigMigrated { version: VERSION });
+}
+
+public fun version(cfg: &ProtocolConfig): u64 { cfg.version }
+
 public fun fee_bps(cfg: &ProtocolConfig): u64 { cfg.fee_bps }
 
 public fun treasury(cfg: &ProtocolConfig): address { cfg.treasury }
@@ -115,3 +153,8 @@ public fun is_paused(cfg: &ProtocolConfig): bool { cfg.paused }
 
 #[test_only]
 public fun init_for_testing(ctx: &mut TxContext) { init(ctx) }
+
+#[test_only]
+public fun set_version_for_testing(cfg: &mut ProtocolConfig, version: u64) {
+    cfg.version = version;
+}

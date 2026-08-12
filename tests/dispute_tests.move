@@ -402,6 +402,54 @@ fun resolving_propagated_after_source_closes() {
     s.end();
 }
 
+/// The registry gates its lifecycle entry points on the package
+/// version.
+#[test]
+#[expected_failure(abort_code = haneul_ip::dispute::EWrongVersion)]
+fun stale_registry_version_blocks_raise() {
+    let mut s = ts::begin(ADMIN);
+    setup(&mut s);
+    setup_tag(&mut s);
+    let clock = new_clock(&mut s);
+    let terms_id = std_terms(&mut s, 1_000, 0);
+    let (ip_id, _) = root_with_terms(&mut s, ALICE, 1, terms_id, &clock);
+
+    s.next_tx(ADMIN);
+    let mut reg = s.take_shared<DisputeRegistry>();
+    dispute::set_version_for_testing(&mut reg, 0);
+    ts::return_shared(reg);
+
+    raise_as(&mut s, CAROL, ip_id, 9, &clock);
+    abort 99
+}
+
+#[test]
+fun migrate_bumps_stale_registry() {
+    let mut s = ts::begin(ADMIN);
+    setup(&mut s);
+    s.next_tx(ADMIN);
+    let mut reg = s.take_shared<DisputeRegistry>();
+    let cap = s.take_from_sender<ProtocolCap>();
+    dispute::set_version_for_testing(&mut reg, 0);
+    dispute::migrate(&mut reg, &cap);
+    assert!(dispute::version(&reg) == 1);
+    s.return_to_sender(cap);
+    ts::return_shared(reg);
+    s.end();
+}
+
+#[test]
+#[expected_failure(abort_code = haneul_ip::dispute::ENotUpgrade)]
+fun migrate_at_current_version_aborts() {
+    let mut s = ts::begin(ADMIN);
+    setup(&mut s);
+    s.next_tx(ADMIN);
+    let mut reg = s.take_shared<DisputeRegistry>();
+    let cap = s.take_from_sender<ProtocolCap>();
+    dispute::migrate(&mut reg, &cap);
+    abort 99
+}
+
 /// Belt-and-suspenders: state constants in this file match the
 /// module's lifecycle (a raise starts IN_DISPUTE).
 #[test]

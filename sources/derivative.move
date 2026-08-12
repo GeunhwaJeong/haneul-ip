@@ -147,12 +147,19 @@ public fun add_parent_direct<T>(
 /// Seals the builder into a shared `IPAsset` and returns the owner
 /// cap. `max_total_stack_bps` (0 = no limit) is the registrant's
 /// slippage guard on the combined royalty burden.
+///
+/// Gated on the package version: the merged graph is immutable once
+/// written, and since the hot potato forces every begin/add_parent
+/// sequence to commit through here, this single gate covers the whole
+/// builder flow.
 public fun finish(
     builder: DerivativeBuilder,
+    cfg: &ProtocolConfig,
     max_total_stack_bps: u64,
     clock: &Clock,
     ctx: &mut TxContext,
 ): IPOwnerCap {
+    protocol::assert_current_version(cfg);
     let DerivativeBuilder {
         name,
         content_hash,

@@ -114,10 +114,12 @@ public fun custom_terms(
 /// Registers a root IP owned by `owner`; returns (ip id, cap id).
 public fun root(s: &mut Scenario, owner: address, seed: u8, clock: &Clock): (ID, ID) {
     s.next_tx(owner);
-    let cap = ip::register(str(b"root"), hash(seed), str(b""), clock, s.ctx());
+    let cfg = s.take_shared<ProtocolConfig>();
+    let cap = ip::register(&cfg, str(b"root"), hash(seed), str(b""), clock, s.ctx());
     let ip_id = ip::cap_ip(&cap);
     let cap_id = object::id(&cap);
     transfer::public_transfer(cap, owner);
+    ts::return_shared(cfg);
     (ip_id, cap_id)
 }
 
@@ -206,7 +208,7 @@ public fun make_child(
     );
     let mut builder = derivative::begin(str(b"child"), hash(seed), str(b""));
     derivative::add_parent(&mut builder, &mut parent, &reg, license, clock);
-    let cap = derivative::finish(builder, 0, clock, s.ctx());
+    let cap = derivative::finish(builder, &cfg, 0, clock, s.ctx());
     let child_ip = ip::cap_ip(&cap);
     let cap_id = object::id(&cap);
     transfer::public_transfer(cap, creator);
@@ -241,6 +243,16 @@ public fun pay_royalty(s: &mut Scenario, payer: address, ip_id: ID, amount: u64,
     royalty::pay<HANEUL>(&cfg, &mut asset, mint_haneul(s, amount), clock, s.ctx());
     ts::return_shared(cfg);
     ts::return_shared(asset);
+}
+
+/// Simulates a config left behind by a package upgrade: the stored
+/// version drops below the package VERSION, so gated entry points
+/// abort until `protocol::migrate` runs.
+public fun stale_config(s: &mut Scenario) {
+    s.next_tx(ADMIN);
+    let mut cfg = s.take_shared<ProtocolConfig>();
+    protocol::set_version_for_testing(&mut cfg, 0);
+    ts::return_shared(cfg);
 }
 
 /// Whitelists the "PLAGIARISM" dispute tag as ADMIN.

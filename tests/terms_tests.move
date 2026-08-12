@@ -9,6 +9,7 @@ module haneul_ip::terms_tests;
 
 use haneul::haneul::HANEUL;
 use haneul::test_scenario::{Self as ts, Scenario};
+use haneul_ip::protocol::ProtocolCap;
 use haneul_ip::terms::{Self, TermsRegistry};
 use haneul_ip::test_helpers::{str, setup};
 use std::type_name;
@@ -155,6 +156,47 @@ fun no_derivatives_with_reciprocal_aborts() {
     let mut s = ts::begin(ADMIN);
     setup(&mut s);
     register_custom(&mut s, true, false, 0, false, false, false, true, 0);
+    abort 99
+}
+
+/// The registry gates its own mutations on the package version.
+#[test]
+#[expected_failure(abort_code = haneul_ip::terms::EWrongVersion)]
+fun stale_registry_version_blocks_register() {
+    let mut s = ts::begin(ADMIN);
+    setup(&mut s);
+    s.next_tx(ADMIN);
+    let mut reg = s.take_shared<TermsRegistry>();
+    terms::set_version_for_testing(&mut reg, 0);
+    ts::return_shared(reg);
+    register_custom(&mut s, true, false, 100, true, false, false, true, 0);
+    abort 99
+}
+
+#[test]
+fun migrate_bumps_stale_registry() {
+    let mut s = ts::begin(ADMIN);
+    setup(&mut s);
+    s.next_tx(ADMIN);
+    let mut reg = s.take_shared<TermsRegistry>();
+    let cap = s.take_from_sender<ProtocolCap>();
+    terms::set_version_for_testing(&mut reg, 0);
+    terms::migrate(&mut reg, &cap);
+    assert!(terms::version(&reg) == 1);
+    s.return_to_sender(cap);
+    ts::return_shared(reg);
+    s.end();
+}
+
+#[test]
+#[expected_failure(abort_code = haneul_ip::terms::ENotUpgrade)]
+fun migrate_at_current_version_aborts() {
+    let mut s = ts::begin(ADMIN);
+    setup(&mut s);
+    s.next_tx(ADMIN);
+    let mut reg = s.take_shared<TermsRegistry>();
+    let cap = s.take_from_sender<ProtocolCap>();
+    terms::migrate(&mut reg, &cap);
     abort 99
 }
 

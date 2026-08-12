@@ -17,6 +17,7 @@ use haneul_ip::terms::TermsRegistry;
 use haneul_ip::test_helpers::{
     new_clock,
     setup,
+    stale_config,
     std_terms,
     root_with_terms,
     pay_royalty,
@@ -208,6 +209,51 @@ fun unpause_resumes_payments() {
     ts::return_shared(asset);
     clock.destroy_for_testing();
     s.end();
+}
+
+/// After a package upgrade, the previous package's entry points must
+/// not keep writing state: the version gate inside `assert_running`
+/// shuts every money path until `migrate` runs.
+#[test]
+#[expected_failure(abort_code = haneul_ip::protocol::EWrongVersion)]
+fun stale_version_blocks_money_paths() {
+    let mut s = ts::begin(ADMIN);
+    setup(&mut s);
+    let clock = new_clock(&mut s);
+    let terms_id = std_terms(&mut s, 1_000, 0);
+    let (ip_id, _) = root_with_terms(&mut s, ALICE, 1, terms_id, &clock);
+    stale_config(&mut s);
+    pay_royalty(&mut s, CAROL, ip_id, 1_000, &clock);
+    abort 99
+}
+
+#[test]
+fun migrate_bumps_stale_config() {
+    let mut s = ts::begin(ADMIN);
+    setup(&mut s);
+    stale_config(&mut s);
+    s.next_tx(ADMIN);
+    let mut cfg = s.take_shared<ProtocolConfig>();
+    let cap = s.take_from_sender<ProtocolCap>();
+    protocol::migrate(&mut cfg, &cap);
+    assert!(protocol::version(&cfg) == 1);
+    s.return_to_sender(cap);
+    ts::return_shared(cfg);
+    s.end();
+}
+
+/// A replayed migrate (or one against a config already current) is
+/// rejected instead of silently re-emitting events.
+#[test]
+#[expected_failure(abort_code = haneul_ip::protocol::ENotUpgrade)]
+fun migrate_at_current_version_aborts() {
+    let mut s = ts::begin(ADMIN);
+    setup(&mut s);
+    s.next_tx(ADMIN);
+    let mut cfg = s.take_shared<ProtocolConfig>();
+    let cap = s.take_from_sender<ProtocolCap>();
+    protocol::migrate(&mut cfg, &cap);
+    abort 99
 }
 
 /// Cap handoff: the new holder can pull the levers.

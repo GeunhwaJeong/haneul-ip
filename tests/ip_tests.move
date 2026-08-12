@@ -8,12 +8,14 @@ module haneul_ip::ip_tests;
 
 use haneul::test_scenario::{Self as ts};
 use haneul_ip::ip::{Self, IPAsset, IPOwnerCap};
+use haneul_ip::protocol::ProtocolConfig;
 use haneul_ip::terms::{Self, TermsRegistry};
 use haneul_ip::test_helpers::{
     str,
     hash,
     new_clock,
     setup,
+    stale_config,
     std_terms,
     root,
     root_with_terms,
@@ -52,9 +54,10 @@ fun content_hash_31_bytes_aborts() {
     setup(&mut s);
     let clock = new_clock(&mut s);
     s.next_tx(ALICE);
+    let cfg = s.take_shared<ProtocolConfig>();
     let mut short_hash = hash(1);
     short_hash.pop_back();
-    let cap = ip::register(str(b"x"), short_hash, str(b""), &clock, s.ctx());
+    let cap = ip::register(&cfg, str(b"x"), short_hash, str(b""), &clock, s.ctx());
     transfer::public_transfer(cap, ALICE);
     abort 99
 }
@@ -66,9 +69,26 @@ fun content_hash_33_bytes_aborts() {
     setup(&mut s);
     let clock = new_clock(&mut s);
     s.next_tx(ALICE);
+    let cfg = s.take_shared<ProtocolConfig>();
     let mut long_hash = hash(1);
     long_hash.push_back(1);
-    let cap = ip::register(str(b"x"), long_hash, str(b""), &clock, s.ctx());
+    let cap = ip::register(&cfg, str(b"x"), long_hash, str(b""), &clock, s.ctx());
+    transfer::public_transfer(cap, ALICE);
+    abort 99
+}
+
+/// Registration is version-gated even though it is not a money path:
+/// it writes state that can never be corrected afterwards.
+#[test]
+#[expected_failure(abort_code = haneul_ip::protocol::EWrongVersion)]
+fun stale_version_blocks_registration() {
+    let mut s = ts::begin(ADMIN);
+    setup(&mut s);
+    let clock = new_clock(&mut s);
+    stale_config(&mut s);
+    s.next_tx(ALICE);
+    let cfg = s.take_shared<ProtocolConfig>();
+    let cap = ip::register(&cfg, str(b"x"), hash(1), str(b""), &clock, s.ctx());
     transfer::public_transfer(cap, ALICE);
     abort 99
 }

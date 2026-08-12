@@ -20,6 +20,7 @@ use haneul_ip::test_helpers::{
     hash,
     new_clock,
     setup,
+    stale_config,
     std_terms,
     free_terms,
     custom_terms,
@@ -65,7 +66,7 @@ fun make_child_direct(
         clock,
         s.ctx(),
     );
-    let cap = derivative::finish(builder, max_stack, clock, s.ctx());
+    let cap = derivative::finish(builder, &cfg, max_stack, clock, s.ctx());
     let child_ip = ip::cap_ip(&cap);
     let cap_id = object::id(&cap);
     transfer::public_transfer(cap, creator);
@@ -203,8 +204,9 @@ fun finish_without_parents_aborts() {
     setup(&mut s);
     let clock = new_clock(&mut s);
     s.next_tx(BOB);
+    let cfg = s.take_shared<ProtocolConfig>();
     let builder = derivative::begin(str(b"x"), hash(9), str(b""));
-    let cap = derivative::finish(builder, 0, &clock, s.ctx());
+    let cap = derivative::finish(builder, &cfg, 0, &clock, s.ctx());
     transfer::public_transfer(cap, BOB);
     abort 99
 }
@@ -223,6 +225,7 @@ fun combined_stack_above_100_percent_aborts() {
     mint_license_to(&mut s, BOB, ip_b, heavy_terms, 0, &clock);
 
     s.next_tx(BOB);
+    let cfg = s.take_shared<ProtocolConfig>();
     let reg = s.take_shared<TermsRegistry>();
     let mut parent_a = s.take_shared_by_id<IPAsset>(ip_a);
     let mut parent_b = s.take_shared_by_id<IPAsset>(ip_b);
@@ -233,7 +236,7 @@ fun combined_stack_above_100_percent_aborts() {
     let mut builder = derivative::begin(str(b"x"), hash(9), str(b""));
     derivative::add_parent(&mut builder, &mut parent_a, &reg, first, &clock);
     derivative::add_parent(&mut builder, &mut parent_b, &reg, second, &clock);
-    let cap = derivative::finish(builder, 0, &clock, s.ctx());
+    let cap = derivative::finish(builder, &cfg, 0, &clock, s.ctx());
     transfer::public_transfer(cap, BOB);
     abort 99
 }
@@ -251,12 +254,13 @@ fun stack_above_registrant_max_aborts() {
     mint_license_to(&mut s, BOB, root_ip, terms_id, 0, &clock);
 
     s.next_tx(BOB);
+    let cfg = s.take_shared<ProtocolConfig>();
     let reg = s.take_shared<TermsRegistry>();
     let mut parent = s.take_shared_by_id<IPAsset>(root_ip);
     let license = s.take_from_sender<License>();
     let mut builder = derivative::begin(str(b"x"), hash(9), str(b""));
     derivative::add_parent(&mut builder, &mut parent, &reg, license, &clock);
-    let cap = derivative::finish(builder, 500, &clock, s.ctx());
+    let cap = derivative::finish(builder, &cfg, 500, &clock, s.ctx());
     transfer::public_transfer(cap, BOB);
     abort 99
 }
@@ -373,6 +377,32 @@ fun linking_expired_parent_aborts() {
 
     clock.increment_for_testing(1_000_001);
     make_child_direct(&mut s, CAROL, child_ip, timed_terms, 0, 0, 0, 3, &clock);
+    abort 99
+}
+
+/// The hot potato commits through `finish`, so the version gate there
+/// covers the whole builder sequence: a license minted before the
+/// upgrade cannot slip a registration past the gate.
+#[test]
+#[expected_failure(abort_code = haneul_ip::protocol::EWrongVersion)]
+fun stale_version_blocks_finish() {
+    let mut s = ts::begin(ADMIN);
+    setup(&mut s);
+    let clock = new_clock(&mut s);
+    let terms_id = free_terms(&mut s);
+    let (root_ip, _) = root_with_terms(&mut s, ALICE, 1, terms_id, &clock);
+    mint_license_to(&mut s, BOB, root_ip, terms_id, 0, &clock);
+    stale_config(&mut s);
+
+    s.next_tx(BOB);
+    let cfg = s.take_shared<ProtocolConfig>();
+    let reg = s.take_shared<TermsRegistry>();
+    let mut parent = s.take_shared_by_id<IPAsset>(root_ip);
+    let license = s.take_from_sender<License>();
+    let mut builder = derivative::begin(str(b"x"), hash(9), str(b""));
+    derivative::add_parent(&mut builder, &mut parent, &reg, license, &clock);
+    let cap = derivative::finish(builder, &cfg, 0, &clock, s.ctx());
+    transfer::public_transfer(cap, BOB);
     abort 99
 }
 

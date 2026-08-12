@@ -17,6 +17,7 @@ module haneul_ip::terms;
 
 use haneul::event;
 use haneul::table::{Self, Table};
+use haneul_ip::protocol::ProtocolCap;
 use std::string::String;
 use std::type_name::{Self, TypeName};
 
@@ -28,11 +29,18 @@ const ENoDerivativesButAttribution: u64 = 4;
 const ENoDerivativesButApproval: u64 = 5;
 const ENoDerivativesButReciprocal: u64 = 6;
 const ETermsNotFound: u64 = 7;
+const EWrongVersion: u64 = 8;
+const ENotUpgrade: u64 = 9;
 
 const BPS_DENOM: u64 = 10_000;
+/// See `protocol.move`: bumped when an upgrade must invalidate the
+/// previous package's entry points.
+const VERSION: u64 = 1;
 
 public struct TermsRegistry has key {
     id: UID,
+    /// Package version this object was last migrated to. Checked by
+    /// `register`; bumped by `migrate` after a package upgrade.
     version: u64,
     terms: Table<u64, Terms>,
     /// Ids start at 1; 0 is never a valid terms id.
@@ -75,10 +83,12 @@ public struct TermsRegistered has copy, drop {
     default_minting_fee: u64,
 }
 
+public struct RegistryMigrated has copy, drop { version: u64 }
+
 fun init(ctx: &mut TxContext) {
     transfer::share_object(TermsRegistry {
         id: object::new(ctx),
-        version: 1,
+        version: VERSION,
         terms: table::new(ctx),
         count: 0,
     });
@@ -102,6 +112,7 @@ public fun register<T>(
     default_minting_fee: u64,
     uri: String,
 ): u64 {
+    assert!(reg.version == VERSION, EWrongVersion);
     assert!(commercial_rev_share_bps <= BPS_DENOM, EInvalidRevShare);
     if (!commercial_use) {
         assert!(commercial_rev_share_bps == 0, ENonCommercialRevShare);
@@ -159,6 +170,17 @@ public fun register_commercial_remix<T>(
     register<T>(reg, true, 0, true, true, rev_share_bps, true, true, false, true, fee, uri)
 }
 
+/// Brings a registry left behind by a package upgrade up to the
+/// current version, unfreezing `register`. Rejects a same-version
+/// call so it cannot be replayed.
+public fun migrate(reg: &mut TermsRegistry, _cap: &ProtocolCap) {
+    assert!(reg.version < VERSION, ENotUpgrade);
+    reg.version = VERSION;
+    event::emit(RegistryMigrated { version: VERSION });
+}
+
+public fun version(reg: &TermsRegistry): u64 { reg.version }
+
 public fun get(reg: &TermsRegistry, terms_id: u64): &Terms {
     assert!(reg.terms.contains(terms_id), ETermsNotFound);
     reg.terms.borrow(terms_id)
@@ -192,3 +214,8 @@ public fun uri(t: &Terms): String { t.uri }
 
 #[test_only]
 public fun init_for_testing(ctx: &mut TxContext) { init(ctx) }
+
+#[test_only]
+public fun set_version_for_testing(reg: &mut TermsRegistry, version: u64) {
+    reg.version = version;
+}

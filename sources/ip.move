@@ -31,6 +31,7 @@ use haneul::coin::{Self, Coin};
 use haneul::event;
 use haneul::vec_map::{Self, VecMap};
 use haneul::vec_set::{Self, VecSet};
+use haneul_ip::protocol::{Self, ProtocolConfig};
 use haneul_ip::terms::{Self, Terms, TermsRegistry};
 use std::string::String;
 use std::type_name::{Self, TypeName};
@@ -61,6 +62,13 @@ const MAX_APPROVED_LICENSEES: u64 = 128;
 
 public struct IPAsset has key {
     id: UID,
+    /// Schema version stamped at creation. Deliberately NOT checked
+    /// against the package version on use: assets are many, and an
+    /// exact gate would halt every one of them until each was
+    /// individually migrated after an upgrade. Global enforcement
+    /// rides on the `ProtocolConfig` gate instead; this field exists
+    /// so future code can detect and lazily migrate old-schema assets
+    /// one by one.
     version: u64,
     name: String,
     /// 32-byte hash of the underlying work. Self-attested: the chain
@@ -188,13 +196,18 @@ public struct LicenseeRevoked has copy, drop {
 // === Registration ===
 
 /// Registers a root IP. Shares the asset, returns the owner cap.
+/// Gated on the package version (not the pause switch: registration
+/// is not a money path) because it writes state that can never be
+/// corrected afterwards.
 public fun register(
+    cfg: &ProtocolConfig,
     name: String,
     content_hash: vector<u8>,
     uri: String,
     clock: &Clock,
     ctx: &mut TxContext,
 ): IPOwnerCap {
+    protocol::assert_current_version(cfg);
     let (cap, ip_id) = new_ip(
         name,
         content_hash,

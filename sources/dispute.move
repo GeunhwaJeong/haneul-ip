@@ -43,6 +43,8 @@ const ENotDescendant: u64 = 8;
 const EAlreadyPropagated: u64 = 9;
 const ESourceNotClosed: u64 = 10;
 const EDisputeNotFound: u64 = 11;
+const EWrongVersion: u64 = 12;
+const ENotUpgrade: u64 = 13;
 
 const STATE_IN_DISPUTE: u8 = 0;
 const STATE_UPHELD: u8 = 1;
@@ -51,9 +53,15 @@ const STATE_CANCELLED: u8 = 3;
 const STATE_RESOLVED: u8 = 4;
 
 const EVIDENCE_HASH_LENGTH: u64 = 32;
+/// See `protocol.move`: bumped when an upgrade must invalidate the
+/// previous package's entry points.
+const VERSION: u64 = 1;
 
 public struct DisputeRegistry has key {
     id: UID,
+    /// Package version this object was last migrated to. Checked by
+    /// every lifecycle entry point; bumped by `migrate` after a
+    /// package upgrade.
     version: u64,
     /// Sole judgement authority for v1.
     arbiter: address,
@@ -107,10 +115,12 @@ public struct ArbiterSet has copy, drop { arbiter: address }
 
 public struct TagAllowed has copy, drop { tag: String, allowed: bool }
 
+public struct RegistryMigrated has copy, drop { version: u64 }
+
 fun init(ctx: &mut TxContext) {
     transfer::share_object(DisputeRegistry {
         id: object::new(ctx),
-        version: 1,
+        version: VERSION,
         arbiter: ctx.sender(),
         tags: vec_set::empty(),
         disputes: table::new(ctx),
@@ -137,6 +147,15 @@ public fun disallow_tag(reg: &mut DisputeRegistry, _cap: &ProtocolCap, tag: Stri
     event::emit(TagAllowed { tag, allowed: false });
 }
 
+/// Brings a registry left behind by a package upgrade up to the
+/// current version, unfreezing the lifecycle entry points. Rejects a
+/// same-version call so it cannot be replayed.
+public fun migrate(reg: &mut DisputeRegistry, _cap: &ProtocolCap) {
+    assert!(reg.version < VERSION, ENotUpgrade);
+    reg.version = VERSION;
+    event::emit(RegistryMigrated { version: VERSION });
+}
+
 // === Lifecycle ===
 
 /// Anyone may raise a dispute against a registered IP.
@@ -148,6 +167,7 @@ public fun raise(
     clock: &Clock,
     ctx: &mut TxContext,
 ): u64 {
+    assert_current_version(reg);
     assert!(reg.tags.contains(&tag), ETagNotAllowed);
     assert!(evidence_hash.length() == EVIDENCE_HASH_LENGTH, EBadEvidence);
     assert!(!reg.used_evidence.contains(evidence_hash), EEvidenceUsed);
@@ -182,6 +202,7 @@ public fun judge(
     uphold: bool,
     ctx: &TxContext,
 ) {
+    assert_current_version(reg);
     assert!(ctx.sender() == reg.arbiter, ENotArbiter);
     assert!(reg.disputes.contains(dispute_id), EDisputeNotFound);
     let dispute = reg.disputes.borrow_mut(dispute_id);
@@ -198,6 +219,7 @@ public fun judge(
 
 /// The initiator may withdraw a dispute that has not been judged.
 public fun cancel(reg: &mut DisputeRegistry, dispute_id: u64, ctx: &TxContext) {
+    assert_current_version(reg);
     assert!(reg.disputes.contains(dispute_id), EDisputeNotFound);
     let dispute = reg.disputes.borrow_mut(dispute_id);
     assert!(dispute.state == STATE_IN_DISPUTE, ENotInDispute);
@@ -216,6 +238,7 @@ public fun propagate(
     source_dispute_id: u64,
     ctx: &TxContext,
 ): u64 {
+    assert_current_version(reg);
     assert!(reg.disputes.contains(source_dispute_id), EDisputeNotFound);
     let (source_target, source_tag, source_evidence, source_state) = {
         let source = reg.disputes.borrow(source_dispute_id);
@@ -257,6 +280,7 @@ public fun resolve(
     dispute_id: u64,
     ctx: &TxContext,
 ) {
+    assert_current_version(reg);
     assert!(reg.disputes.contains(dispute_id), EDisputeNotFound);
     let source_id = reg.disputes.borrow(dispute_id).source;
     if (source_id > 0) {
@@ -279,6 +303,10 @@ public fun resolve(
     event::emit(DisputeResolved { dispute_id });
 }
 
+fun assert_current_version(reg: &DisputeRegistry) {
+    assert!(reg.version == VERSION, EWrongVersion);
+}
+
 fun propagation_key(child: ID, source_dispute_id: u64): vector<u8> {
     let mut key = bcs::to_bytes(&child);
     key.append(bcs::to_bytes(&source_dispute_id));
@@ -299,6 +327,8 @@ public fun tag(reg: &DisputeRegistry, dispute_id: u64): String {
 
 public fun arbiter(reg: &DisputeRegistry): address { reg.arbiter }
 
+public fun version(reg: &DisputeRegistry): u64 { reg.version }
+
 public fun count(reg: &DisputeRegistry): u64 { reg.count }
 
 public fun is_tag_allowed(reg: &DisputeRegistry, tag: &String): bool {
@@ -307,3 +337,8 @@ public fun is_tag_allowed(reg: &DisputeRegistry, tag: &String): bool {
 
 #[test_only]
 public fun init_for_testing(ctx: &mut TxContext) { init(ctx) }
+
+#[test_only]
+public fun set_version_for_testing(reg: &mut DisputeRegistry, version: u64) {
+    reg.version = version;
+}
