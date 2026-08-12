@@ -256,7 +256,8 @@ fun transferable_license_changes_hands() {
     s.end();
 }
 
-/// `key`-only + a checked transfer function = Story's transfer hook.
+/// `key`-only plus a checked transfer function: non-transferability
+/// is enforced by the type system.
 #[test]
 #[expected_failure(abort_code = haneul_ip::license::ENotTransferable)]
 fun non_transferable_license_cannot_move() {

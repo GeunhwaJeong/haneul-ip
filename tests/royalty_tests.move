@@ -1,8 +1,8 @@
 // Copyright (c) Haneul Labs
 // SPDX-License-Identifier: Apache-2.0
 
-/// Tests for `haneul_ip::royalty`: the LAP split math, both claim
-/// paths, the freeze rules, and multi-currency pools.
+/// Tests for `haneul_ip::royalty`: the absolute-share split math,
+/// both claim paths, the freeze rules, and multi-currency pools.
 #[test_only]
 module haneul_ip::royalty_tests;
 
@@ -75,7 +75,7 @@ fun root_owner_claims_full_payment() {
     s.end();
 }
 
-/// The core LAP flow: root licenses at 10%; a fan pays the child
+/// The core split flow: root licenses at 10%; a fan pays the child
 /// 1000; the root's owner pulls 100 out of the CHILD's pool with the
 /// ROOT's cap, the child's owner gets 900.
 #[test]

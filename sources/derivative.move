@@ -3,22 +3,20 @@
 
 /// Derivative registration as a hot-potato builder.
 ///
-/// An EVM contract takes the parent list as one calldata array; a
-/// Move transaction cannot pass an arbitrary number of shared objects
-/// to one call. The PTB-native shape is a builder:
+/// A transaction cannot pass an arbitrary number of shared objects to
+/// one call, so registration is shaped for the transaction builder:
 ///
 ///   begin -> add_parent(parent, ...) x N -> finish
 ///
 /// `DerivativeBuilder` has no abilities, so a transaction that begins
-/// one MUST finish it — parents can never be half-linked.
+/// one MUST finish it; parents can never be half-linked.
 ///
 /// Each add_parent folds the parent's ancestor royalty map into the
-/// child's (Story LAP semantics: a grandparent's absolute share
-/// carries through unchanged; shares from multiple paths to the same
-/// ancestor add up). This one-time merge at registration is the
-/// entire replacement for Story's IP-graph precompile — it is sound
-/// because the graph is append-only: a registered IP's parents never
-/// change.
+/// child's: a grandparent's absolute share carries through unchanged,
+/// and shares from multiple paths to the same ancestor add up. This
+/// one-time merge is what lets every later payment split in a single
+/// bounded loop, and it is sound because the graph is append-only: a
+/// registered IP's parents never change.
 module haneul_ip::derivative;
 
 use haneul::clock::Clock;
@@ -52,7 +50,7 @@ const BPS_DENOM: u64 = 10_000;
 /// Product bounds, not gas bounds (a Move loop over a VecMap is
 /// cheap). Chosen conservative for a first version; raising them
 /// later is a compatible package upgrade because they are only
-/// checked at registration time. Story shipped mainnet with 16/1024.
+/// checked at registration time.
 const MAX_PARENTS: u64 = 8;
 const MAX_ANCESTORS: u64 = 32;
 
@@ -89,7 +87,7 @@ public fun begin(name: String, content_hash: vector<u8>, uri: String): Derivativ
 
 /// Links a parent by burning a `License` minted from it. The license
 /// already embeds the agreed revenue share, so no payment happens
-/// here — it happened at mint.
+/// here; it happened at mint.
 public fun add_parent(
     builder: &mut DerivativeBuilder,
     parent: &mut IPAsset,
@@ -122,8 +120,8 @@ public fun add_parent_approved(
     link(builder, parent, &t, terms_id, rev_share_bps, clock);
 }
 
-/// Mint-and-link in one step (Story's `registerDerivative` without
-/// license tokens): pays the minting fee directly and links.
+/// Mint-and-link in one step: pays the minting fee directly and
+/// links, with no separate license object changing hands.
 public fun add_parent_direct<T>(
     builder: &mut DerivativeBuilder,
     parent: &mut IPAsset,

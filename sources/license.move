@@ -4,11 +4,10 @@
 /// The license object: a right, sold by an IP, to register a
 /// derivative (or simply to hold as proof of licensed use).
 ///
-/// Story models this as an ERC-721 with a transfer hook that reverts
-/// for non-transferable licenses. Here the object is `key`-only, so
-/// it can never move through generic transfer at all; the ONLY way it
-/// changes hands is `transfer_license` below, which checks the flag.
-/// The 100-line hook becomes one missing ability.
+/// The object is `key`-only, so it can never move through generic
+/// transfer at all; the ONLY way it changes hands is
+/// `transfer_license` below, which checks the transferable flag.
+/// Non-transferability is a missing ability, not a hook.
 ///
 /// Terms values (fee, revenue share) are snapshotted at mint time:
 /// the licensor changing their config later must not rewrite a
@@ -64,7 +63,7 @@ public struct LicenseTransferred has copy, drop {
 ///
 /// The fee is deposited into the licensor's own revenue pool, which
 /// means the licensor's ancestors take their royalty cut of minting
-/// fees too — same money route as Story's `payLicenseMintingFee`.
+/// fees too: a minting fee is revenue like any other.
 public fun mint<T>(
     cfg: &ProtocolConfig,
     licensor_ip: &mut IPAsset,
@@ -118,7 +117,7 @@ public fun mint<T>(
     license_id
 }
 
-/// Convenience path for free terms — no payment coin needed.
+/// Convenience path for free terms; no payment coin needed.
 public fun mint_free(
     cfg: &ProtocolConfig,
     licensor_ip: &mut IPAsset,

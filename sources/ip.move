@@ -4,26 +4,24 @@
 /// The IP asset itself: identity, provenance graph, and revenue vault
 /// in one object.
 ///
-/// This single struct replaces four layers of Story Protocol's EVM
-/// architecture at once:
-///  - IPAccount (ERC-6551 token-bound account) — a Move object IS an
-///    identity that can own things; no account contract needed.
-///  - IPAssetRegistry — the object store is the registry.
-///  - The `0x0101` IP-graph precompile — Story forked geth to store
-///    the ancestor graph natively because EVM contract storage made
-///    it prohibitive. The graph here is two object fields. This works
-///    because the graph is append-only: parents are fixed at
+/// One shared object carries everything a registered work needs:
+///  - Identity: the object is an addressable identity that can own
+///    things; no separate account layer exists.
+///  - Registry: the object store is the registry; there is no global
+///    lookup contract to keep in sync.
+///  - Graph: the ancestor royalty map is two object fields. This
+///    works because the graph is append-only: parents are fixed at
 ///    registration and never change, so each IP's ancestor royalty
 ///    map can be merged ONCE at registration and stays valid forever.
-///  - IpRoyaltyVault (one BeaconProxy per IP) — the `revenue` Bag
-///    holds one `Pool<T>` per coin type, inside the object.
+///  - Vault: the `revenue` Bag holds one `Pool<T>` per coin type,
+///    inside the object itself; no per-asset vault deployment.
 ///
-/// Royalty semantics are Story's LAP ("liquid absolute percentage"):
-/// each ancestor's bps applies to EVERY payment made to this IP, not
-/// to a per-hop waterfall. An ancestor's share sits in this object's
-/// pool as `owed` until the ancestor claims it with their own cap —
-/// the pull model is forced by the fact that an owner's wallet
-/// address is not knowable on-chain from the IP object alone.
+/// Royalty semantics are absolute shares: each ancestor's bps applies
+/// to EVERY payment made to this IP, not to a per-hop waterfall. An
+/// ancestor's share sits in this object's pool as `owed` until the
+/// ancestor claims it with their own cap. The pull model is forced by
+/// the fact that an owner's wallet address is not knowable on-chain
+/// from the IP object alone.
 module haneul_ip::ip;
 
 use haneul::bag::{Self, Bag};
@@ -78,7 +76,8 @@ public struct IPAsset has key {
     /// derivatives get exactly the terms they were registered under
     /// (the reciprocal rule) and cannot add more.
     attached_terms: VecSet<u64>,
-    /// Per-terms owner overrides (Story's LicensingConfig layer).
+    /// Per-terms owner overrides: the per-asset rider on the global
+    /// terms sheet.
     configs: VecMap<u64, LicensingConfig>,
     /// Active upheld disputes. Non-zero freezes licensing, linking,
     /// payments and claims.
@@ -98,7 +97,7 @@ public struct IPOwnerCap has key, store {
 
 /// Owner overrides for one attached terms id. A snapshot of the
 /// effective values is taken into each `License` at mint time, so
-/// changing these never rewrites already-sold licenses — which is
+/// changing these never rewrites already-sold licenses, which is
 /// also why minting takes slippage guards.
 public struct LicensingConfig has store, copy, drop {
     disabled: bool,
@@ -250,7 +249,8 @@ fun new_ip(
 // === Terms management (owner-only) ===
 
 /// Only roots attach terms; a derivative's terms are fixed at
-/// registration (Story's "derivatives cannot add license terms").
+/// registration, so the deal a work was born under cannot be
+/// rewritten afterwards.
 public fun attach_terms(
     self: &mut IPAsset,
     cap: &IPOwnerCap,

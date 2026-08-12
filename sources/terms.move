@@ -3,17 +3,15 @@
 
 /// License terms: the machine-readable half of a license agreement.
 ///
-/// This is a port of Story Protocol's PILTerms with the parts that
-/// survived their beta -> mainnet evolution: the free-string legal
-/// fields (`territories`, `distributionChannels`, ...) that their own
-/// code warned against are gone, replaced by a single `uri` pointing
-/// at the off-chain legal text — the chain enforces only what it can
-/// actually verify.
+/// Every field here is something the chain can actually enforce.
+/// Anything it cannot verify (territories, distribution channels,
+/// legal prose) belongs in the off-chain legal document that `uri`
+/// points at: the chain enforces the digest, courts read the text.
 ///
 /// Terms are immutable once registered and referenced by id, so a
 /// `License` or an IP's attached-terms set can point at them without
 /// copying. Per-IP overrides (fee, revenue share, on/off) live on the
-/// IP itself as `LicensingConfig` — the "standard contract + rider"
+/// IP itself as `LicensingConfig`: the "standard contract + rider"
 /// split.
 module haneul_ip::terms;
 
@@ -50,7 +48,7 @@ public struct Terms has store, copy, drop {
     commercial_use: bool,
     commercial_attribution: bool,
     /// Absolute share (bps) of ALL revenue of a derivative that flows
-    /// to the licensor — Story's LAP semantics, not a per-hop split.
+    /// to the licensor, not a per-hop split.
     commercial_rev_share_bps: u64,
     derivatives_allowed: bool,
     derivatives_attribution: bool,
@@ -86,8 +84,7 @@ fun init(ctx: &mut TxContext) {
 }
 
 /// Registers immutable license terms; `T` is the minting-fee
-/// currency. The internal-consistency rules are ports of Story's
-/// `_verifyCommercialUse` / `_verifyDerivatives`: states that cannot
+/// currency. Internal consistency is checked here: states that cannot
 /// mean anything ("non-commercial but takes a revenue share") are
 /// rejected at registration, not discovered at use.
 public fun register<T>(
@@ -142,7 +139,7 @@ public fun register<T>(
     terms_id
 }
 
-// === Flavors (Story's PILFlavors, the two that matter) ===
+// === Flavors: the two preset term sheets most works need ===
 
 /// Free remix culture: anyone may derive, attribution required, no
 /// money anywhere, derivatives inherit the same terms.

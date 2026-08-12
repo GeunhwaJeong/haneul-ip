@@ -4,27 +4,23 @@
 /// Money in, money out: royalty payments into an IP's pool, and the
 /// two claim paths out of it.
 ///
-/// Story needs a vault contract per IP plus a lazy vault-to-vault
-/// `transferToVault` sweep; here a payment lands in the target's own
-/// `Pool<T>` and the ancestor accruals are computed in the same
-/// instruction (the ancestor map is bounded and merged at
-/// registration). Claims are pull-based with the claimer's own
-/// `IPOwnerCap` as identity.
+/// A payment lands in the target's own `Pool<T>` and the ancestor
+/// accruals are computed in the same instruction (the ancestor map is
+/// bounded and merged at registration). Claims are pull-based with
+/// the claimer's own `IPOwnerCap` as identity.
 ///
 /// Freeze rules, in one place:
 ///  - protocol pause freezes payments AND claims (trade-off
 ///    documented in `protocol.move`),
 ///  - a dispute tag on the target freezes its payments and every
-///    claim out of its pools (Story: `isIpTagged` gates), until the
-///    dispute is resolved.
+///    claim out of its pools, until the dispute is resolved.
 ///
-/// Known divergence from Story: an ancestor whose own IP is tagged
-/// can still claim from an untagged descendant here, because the
-/// claim call does not carry the ancestor's `IPAsset` and one cap is
-/// not proof of the other object's state. Story can check it because
-/// everything routes through global registries. Accepted for v1;
-/// revisit if disputes need to freeze an infringer's entire income
-/// rather than the infringing work's.
+/// Known limit: an ancestor whose own IP is tagged can still claim
+/// from an untagged descendant, because the claim call does not carry
+/// the ancestor's `IPAsset` and one cap is not proof of the other
+/// object's state. Accepted for v1; revisit if disputes need to
+/// freeze an infringer's entire income rather than the infringing
+/// work's.
 module haneul_ip::royalty;
 
 use haneul::clock::Clock;
@@ -59,7 +55,7 @@ public struct AncestorClaimed has copy, drop {
 }
 
 /// Pays royalties (or any revenue) to an IP. Any coin type is
-/// accepted — the terms' `currency` only binds minting fees. The
+/// accepted; the terms' `currency` only binds minting fees. The
 /// ancestor cuts accrue inside the target's pool immediately.
 public fun pay<T>(
     cfg: &ProtocolConfig,

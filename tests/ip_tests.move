@@ -143,7 +143,7 @@ fun attach_unknown_terms_aborts() {
 }
 
 /// Derivatives carry the terms they were born under and cannot add
-/// more (Story's rule; prevents rewriting the deal after the fact).
+/// more; the deal a work was born under cannot be rewritten.
 #[test]
 #[expected_failure(abort_code = haneul_ip::ip::ENotRoot)]
 fun attach_on_derivative_aborts() {

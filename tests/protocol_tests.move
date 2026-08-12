@@ -1,7 +1,7 @@
 // Copyright (c) Haneul Labs
 // SPDX-License-Identifier: Apache-2.0
 
-/// Tests for `haneul_ip::protocol`: the fee switch (mechanism only —
+/// Tests for `haneul_ip::protocol`: the fee switch (mechanism only,
 /// starts at zero) and the circuit breaker over inflows and claims.
 #[test_only]
 module haneul_ip::protocol_tests;

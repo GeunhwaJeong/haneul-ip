@@ -6,10 +6,10 @@
 ///
 /// A dispute never touches content (content is off-chain by design);
 /// an upheld dispute tags the target IP, and the tag freezes the
-/// money: licensing, linking, payments and claims all check it. This
-/// is the "돈만 온체인" principle applied to enforcement.
+/// money: licensing, linking, payments and claims all check it.
+/// Rights are data, enforcement is a money switch.
 ///
-/// Ported Story mainnet behaviors:
+/// Behaviors:
 ///  - whitelisted tags, evidence-hash uniqueness (anti-spam),
 ///  - propagation: once an IP is tagged, ANYONE may extend the tag to
 ///    its descendants (the derivative tree monetizes the infringing
@@ -17,10 +17,9 @@
 ///  - propagated tags resolve permissionlessly once the source
 ///    dispute is closed; original tags resolve by their initiator.
 ///
-/// v1 simplification: judgement is a single arbiter address (Story
-/// beta's whitelisted relayer). Their mainnet moved to UMA-style
-/// optimistic arbitration with bonds — that is the known upgrade path
-/// here too, and it slots in behind `judge` without changing state.
+/// v1 simplification: judgement is a single arbiter address. Bonded,
+/// optimistic arbitration is the known upgrade path; it slots in
+/// behind `judge` without changing state.
 module haneul_ip::dispute;
 
 use haneul::clock::Clock;

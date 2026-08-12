@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /// Tests for `haneul_ip::derivative`: the hot-potato builder, the
-/// royalty-graph merge (the precompile replacement), the reciprocal
-/// and approval rules, and the product bounds.
+/// royalty-graph merge, the reciprocal and approval rules, and the
+/// product bounds.
 #[test_only]
 module haneul_ip::derivative_tests;
 
@@ -124,29 +124,25 @@ fun direct_path_pays_fee_and_links() {
     s.end();
 }
 
-/// The precompile replacement, exercised over three generations:
-/// root(10%) -> child(terms 20%) -> grandchild must owe BOTH,
-/// absolute and unchanged (LAP semantics).
+/// The ancestor merge, exercised over three generations: a payment
+/// obligation to the root must carry through the child into the
+/// grandchild, absolute and unchanged.
 #[test]
 fun grandchild_inherits_absolute_ancestor_shares() {
     let mut s = ts::begin(ADMIN);
     setup(&mut s);
     let clock = new_clock(&mut s);
     let root_terms = std_terms(&mut s, 1_000, 0);
-    let child_terms = std_terms(&mut s, 2_000, 0);
     let (root_ip, _) = root_with_terms(&mut s, ALICE, 1, root_terms, &clock);
     let (child_ip, _) = make_child(&mut s, BOB, root_ip, root_terms, 0, 2, &clock);
-    // The child re-licenses under its inherited terms? No — it carries
-    // root_terms. Minting from the child uses root_terms (reciprocal).
+    // Reciprocity fixes the chain's terms: the grandchild registers
+    // under the same terms the child was born with.
     let (grandchild_ip, _) = make_child(&mut s, CAROL, child_ip, root_terms, 0, 3, &clock);
-    // Silence unused warning for child_terms; the scenario only needs
-    // one terms id once reciprocity fixes the chain's terms.
-    let _ = child_terms;
 
     s.next_tx(CAROL);
     let grandchild = s.take_shared_by_id<IPAsset>(grandchild_ip);
-    // Direct parent edge: child at its terms' 10%. Root's 10% share
-    // in the child carries through unchanged.
+    // Direct parent edge at 10%, plus the root's 10% share in the
+    // child carried through unchanged.
     assert!(grandchild.ancestor_share_bps(child_ip) == 1_000);
     assert!(grandchild.ancestor_share_bps(root_ip) == 1_000);
     assert!(grandchild.royalty_stack_bps() == 2_000);

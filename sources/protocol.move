@@ -11,7 +11,7 @@
 ///
 /// The fee STARTS AT ZERO and this module only hard-bounds it to
 /// 100%. What rate (if any) to ever charge, and whether to promise a
-/// lower cap, is deliberately not decided here — that is business
+/// lower cap, is deliberately not decided here; that is business
 /// policy, not mechanism.
 module haneul_ip::protocol;
 
@@ -30,7 +30,7 @@ public struct ProtocolConfig has key {
     treasury: address,
     /// Protocol fee in basis points of each payment. Starts at 0.
     fee_bps: u64,
-    /// Circuit breaker over every money path — inflows (royalty
+    /// Circuit breaker over every money path: inflows (royalty
     /// payments, minting fees) AND claims. Freezing claims is a
     /// deliberate trade-off: it can stop a drain through a buggy
     /// withdrawal path, at the cost of giving the cap holder the
