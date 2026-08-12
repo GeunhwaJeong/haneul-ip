@@ -159,6 +159,19 @@ fun no_derivatives_with_reciprocal_aborts() {
     abort 99
 }
 
+/// The approval allowlist names a specific party; a license that can
+/// change hands afterwards would carry the consent to someone it was
+/// never given to. Contradictory, so rejected at registration.
+#[test]
+#[expected_failure(abort_code = haneul_ip::terms::EApprovalRequiresNonTransferable)]
+fun transferable_approval_terms_abort() {
+    let mut s = ts::begin(ADMIN);
+    setup(&mut s);
+    // register_custom registers with transferable = true.
+    register_custom(&mut s, true, false, 0, true, false, true, true, 0);
+    abort 99
+}
+
 /// The registry gates its own mutations on the package version.
 #[test]
 #[expected_failure(abort_code = haneul_ip::terms::EWrongVersion)]

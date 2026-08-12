@@ -294,7 +294,7 @@ fun approval_terms_block_unapproved_direct_link() {
     let mut s = ts::begin(ADMIN);
     setup(&mut s);
     let clock = new_clock(&mut s);
-    let approval_terms = custom_terms(&mut s, true, 0, true, 1_000, true, true, true, 0);
+    let approval_terms = custom_terms(&mut s, false, 0, true, 1_000, true, true, true, 0);
     let (root_ip, _) = root_with_terms(&mut s, ALICE, 1, approval_terms, &clock);
     make_child_direct(&mut s, BOB, root_ip, approval_terms, 0, 0, 0, 9, &clock);
     abort 99
@@ -308,7 +308,7 @@ fun approved_licensee_buys_and_links_in_one_tx() {
     let mut s = ts::begin(ADMIN);
     setup(&mut s);
     let clock = new_clock(&mut s);
-    let approval_terms = custom_terms(&mut s, true, 0, true, 1_000, true, true, true, 0);
+    let approval_terms = custom_terms(&mut s, false, 0, true, 1_000, true, true, true, 0);
     let (root_ip, root_cap_id) = root_with_terms(&mut s, ALICE, 1, approval_terms, &clock);
 
     approve(&mut s, ALICE, root_ip, root_cap_id, BOB);

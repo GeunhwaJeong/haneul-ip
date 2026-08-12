@@ -31,6 +31,7 @@ const ENoDerivativesButReciprocal: u64 = 6;
 const ETermsNotFound: u64 = 7;
 const EWrongVersion: u64 = 8;
 const ENotUpgrade: u64 = 9;
+const EApprovalRequiresNonTransferable: u64 = 10;
 
 const BPS_DENOM: u64 = 10_000;
 /// See `protocol.move`: bumped when an upgrade must invalidate the
@@ -63,6 +64,10 @@ public struct Terms has store, copy, drop {
     /// If set, minting a license or linking a derivative requires the
     /// licensee to be on the licensor's on-chain allowlist first
     /// (`ip::approve_licensee`). Consent comes before money.
+    /// Approval-gated terms are always non-transferable (enforced at
+    /// registration): the allowlist names a specific party, and a
+    /// license that could change hands would carry that consent to
+    /// someone it was never given to.
     derivatives_approval: bool,
     /// If set, a derivative may itself license these same terms
     /// onward (derivatives of derivatives).
@@ -124,6 +129,12 @@ public fun register<T>(
         assert!(!derivatives_approval, ENoDerivativesButApproval);
         assert!(!derivatives_reciprocal, ENoDerivativesButReciprocal);
     };
+    // The approval allowlist is checked against the minter, and the
+    // license path of derivative registration deliberately treats a
+    // license in hand as recorded consent. A transferable license
+    // would let an approved buyer hand that consent to a party the
+    // licensor never approved, so the combination is contradictory.
+    assert!(!derivatives_approval || !transferable, EApprovalRequiresNonTransferable);
 
     let terms_id = reg.count + 1;
     reg.count = terms_id;

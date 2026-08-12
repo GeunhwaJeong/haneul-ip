@@ -18,7 +18,10 @@
 /// Approval-gated terms are enforced HERE, at mint time: the buyer
 /// must already be on the licensor's allowlist, so consent exists
 /// on-chain before any money moves. No one can end up holding a paid
-/// license they were never allowed to use.
+/// license they were never allowed to use. Transfer cannot carry the
+/// consent to an unapproved party either: approval-gated terms are
+/// always non-transferable (`terms::register` rejects the
+/// combination).
 ///
 /// Terms values (fee, revenue share) are snapshotted at mint time:
 /// the licensor changing their config later must not rewrite a

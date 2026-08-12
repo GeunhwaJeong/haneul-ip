@@ -289,7 +289,7 @@ fun unapproved_mint_on_approval_terms_aborts() {
     let mut s = ts::begin(ADMIN);
     setup(&mut s);
     let clock = new_clock(&mut s);
-    let approval_terms = custom_terms(&mut s, true, 0, true, 1_000, true, true, true, 0);
+    let approval_terms = custom_terms(&mut s, false, 0, true, 1_000, true, true, true, 0);
     let (ip_id, _) = root_with_terms(&mut s, ALICE, 1, approval_terms, &clock);
     mint_license_to(&mut s, BOB, ip_id, approval_terms, 0, &clock);
     abort 99
@@ -303,7 +303,7 @@ fun revoked_licensee_cannot_mint_again() {
     let mut s = ts::begin(ADMIN);
     setup(&mut s);
     let clock = new_clock(&mut s);
-    let approval_terms = custom_terms(&mut s, true, 0, true, 1_000, true, true, true, 0);
+    let approval_terms = custom_terms(&mut s, false, 0, true, 1_000, true, true, true, 0);
     let (ip_id, cap_id) = root_with_terms(&mut s, ALICE, 1, approval_terms, &clock);
 
     approve(&mut s, ALICE, ip_id, cap_id, BOB);
