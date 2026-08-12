@@ -25,6 +25,7 @@ module haneul_ip::protocol;
 
 use haneul::coin::Coin;
 use haneul::event;
+use std::type_name::{Self, TypeName};
 
 const EPaused: u64 = 0;
 const EFeeAboveMax: u64 = 1;
@@ -65,7 +66,9 @@ public struct FeeSet has copy, drop { fee_bps: u64 }
 public struct ConfigMigrated has copy, drop { version: u64 }
 public struct TreasurySet has copy, drop { treasury: address }
 public struct PauseSet has copy, drop { paused: bool }
-public struct FeeCollected has copy, drop { amount: u64 }
+/// Carries the coin type so the treasury's event stream reconciles
+/// per currency without re-reading each transaction.
+public struct FeeCollected has copy, drop { amount: u64, coin_type: TypeName }
 
 fun init(ctx: &mut TxContext) {
     transfer::share_object(ProtocolConfig {
@@ -104,7 +107,7 @@ public(package) fun collect<T>(
         ((payment.value() as u128) * (cfg.fee_bps as u128) / (BPS_DENOM as u128)) as u64;
     if (fee == 0) return 0;
     transfer::public_transfer(payment.split(fee, ctx), cfg.treasury);
-    event::emit(FeeCollected { amount: fee });
+    event::emit(FeeCollected { amount: fee, coin_type: type_name::with_defining_ids<T>() });
     fee
 }
 
@@ -157,4 +160,9 @@ public fun init_for_testing(ctx: &mut TxContext) { init(ctx) }
 #[test_only]
 public fun set_version_for_testing(cfg: &mut ProtocolConfig, version: u64) {
     cfg.version = version;
+}
+
+#[test_only]
+public fun fee_collected_fields(e: &FeeCollected): (u64, TypeName) {
+    (e.amount, e.coin_type)
 }

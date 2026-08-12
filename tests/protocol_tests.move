@@ -7,6 +7,7 @@
 module haneul_ip::protocol_tests;
 
 use haneul::coin::Coin;
+use haneul::event;
 use haneul::haneul::HANEUL;
 use haneul::test_scenario::{Self as ts, Scenario};
 use haneul_ip::ip::{Self, IPAsset, IPOwnerCap};
@@ -90,6 +91,13 @@ fun fee_switch_takes_cut_to_treasury() {
     set_fee(&mut s, 500);
 
     pay_royalty(&mut s, CAROL, ip_id, 1_000, &clock);
+    // The event carries amount and currency, so a multi-currency
+    // treasury reconciles from the event stream alone.
+    let fee_events = event::events_by_type<protocol::FeeCollected>();
+    assert!(fee_events.length() == 1);
+    let (amount, coin_type) = protocol::fee_collected_fields(&fee_events[0]);
+    assert!(amount == 50);
+    assert!(coin_type == std::type_name::with_defining_ids<HANEUL>());
 
     s.next_tx(ADMIN);
     let fee_coin = s.take_from_sender<Coin<HANEUL>>();
