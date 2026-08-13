@@ -36,20 +36,34 @@ use haneul_ip::terms::{Self, Terms, TermsRegistry};
 use std::string::String;
 use std::type_name::{Self, TypeName};
 
-const ENotOwner: u64 = 0;
-const EBadContentHash: u64 = 1;
-const ETagged: u64 = 2;
-const EExpired: u64 = 3;
-const ENotRoot: u64 = 4;
-const ETermsAlreadyAttached: u64 = 5;
-const ETermsNotAttached: u64 = 6;
-const EInvalidRevShare: u64 = 7;
-const ENothingToClaim: u64 = 8;
-const EConfigDisabled: u64 = 9;
-const ETermsNotFound: u64 = 10;
-const ECurrencyNotAccepted: u64 = 11;
-const ETooManyCurrencies: u64 = 12;
-const ETooManyApprovals: u64 = 13;
+#[error(code = 0)]
+const ENotOwner: vector<u8> = b"The cap does not own this IP asset.";
+#[error(code = 1)]
+const EBadContentHash: vector<u8> = b"The content hash must be exactly 32 bytes.";
+#[error(code = 2)]
+const ETagged: vector<u8> = b"This IP asset is frozen by an upheld dispute.";
+#[error(code = 3)]
+const EExpired: vector<u8> = b"This IP asset has expired.";
+#[error(code = 4)]
+const ENotRoot: vector<u8> = b"Only a root IP can attach terms; a derivative's terms are fixed at registration.";
+#[error(code = 5)]
+const ETermsAlreadyAttached: vector<u8> = b"These terms are already attached to this IP asset.";
+#[error(code = 6)]
+const ETermsNotAttached: vector<u8> = b"These terms are not attached to this IP asset.";
+#[error(code = 7)]
+const EInvalidRevShare: vector<u8> = b"The revenue share exceeds 100% (10000 bps).";
+#[error(code = 8)]
+const ENothingToClaim: vector<u8> = b"There is nothing to claim in this pool.";
+#[error(code = 9)]
+const EConfigDisabled: vector<u8> = b"Licensing under these terms is disabled by the owner.";
+#[error(code = 10)]
+const ETermsNotFound: vector<u8> = b"No terms are registered under this id.";
+#[error(code = 11)]
+const ECurrencyNotAccepted: vector<u8> = b"This IP asset does not accept revenue in this coin type.";
+#[error(code = 12)]
+const ETooManyCurrencies: vector<u8> = b"The accepted-currency limit has been reached.";
+#[error(code = 13)]
+const ETooManyApprovals: vector<u8> = b"The approved-licensee limit has been reached.";
 
 const BPS_DENOM: u64 = 10_000;
 const CONTENT_HASH_LENGTH: u64 = 32;

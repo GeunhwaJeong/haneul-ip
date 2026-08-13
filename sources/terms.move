@@ -21,17 +21,28 @@ use haneul_ip::protocol::ProtocolCap;
 use std::string::String;
 use std::type_name::{Self, TypeName};
 
-const EInvalidRevShare: u64 = 0;
-const ENonCommercialRevShare: u64 = 1;
-const ENonCommercialAttribution: u64 = 2;
-const ENonCommercialMintingFee: u64 = 3;
-const ENoDerivativesButAttribution: u64 = 4;
-const ENoDerivativesButApproval: u64 = 5;
-const ENoDerivativesButReciprocal: u64 = 6;
-const ETermsNotFound: u64 = 7;
-const EWrongVersion: u64 = 8;
-const ENotUpgrade: u64 = 9;
-const EApprovalRequiresNonTransferable: u64 = 10;
+#[error(code = 0)]
+const EInvalidRevShare: vector<u8> = b"The revenue share exceeds 100% (10000 bps).";
+#[error(code = 1)]
+const ENonCommercialRevShare: vector<u8> = b"Non-commercial terms cannot take a revenue share.";
+#[error(code = 2)]
+const ENonCommercialAttribution: vector<u8> = b"Non-commercial terms cannot require commercial attribution.";
+#[error(code = 3)]
+const ENonCommercialMintingFee: vector<u8> = b"Non-commercial terms cannot charge a minting fee.";
+#[error(code = 4)]
+const ENoDerivativesButAttribution: vector<u8> = b"Terms that forbid derivatives cannot require derivative attribution.";
+#[error(code = 5)]
+const ENoDerivativesButApproval: vector<u8> = b"Terms that forbid derivatives cannot require derivative approval.";
+#[error(code = 6)]
+const ENoDerivativesButReciprocal: vector<u8> = b"Terms that forbid derivatives cannot be reciprocal.";
+#[error(code = 7)]
+const ETermsNotFound: vector<u8> = b"No terms are registered under this id.";
+#[error(code = 8)]
+const EWrongVersion: vector<u8> = b"The registry's version does not match the package; call migrate after an upgrade.";
+#[error(code = 9)]
+const ENotUpgrade: vector<u8> = b"The stored version is already current; migrate only applies after an upgrade.";
+#[error(code = 10)]
+const EApprovalRequiresNonTransferable: vector<u8> = b"Approval-gated terms must be non-transferable.";
 
 const BPS_DENOM: u64 = 10_000;
 /// See `protocol.move`: bumped when an upgrade must invalidate the

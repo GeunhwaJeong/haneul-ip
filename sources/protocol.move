@@ -27,13 +27,20 @@ use haneul::coin::Coin;
 use haneul::event;
 use std::type_name::{Self, TypeName};
 
-const EPaused: u64 = 0;
-const EFeeAboveMax: u64 = 1;
-const EWrongVersion: u64 = 2;
-const ENotUpgrade: u64 = 3;
-const ENoPendingTransfer: u64 = 4;
-const ENotPendingAdmin: u64 = 5;
-const ETransferNotAccepted: u64 = 6;
+#[error(code = 0)]
+const EPaused: vector<u8> = b"The protocol is paused.";
+#[error(code = 1)]
+const EFeeAboveMax: vector<u8> = b"The fee exceeds 100% (10000 bps).";
+#[error(code = 2)]
+const EWrongVersion: vector<u8> = b"The config's version does not match the package; call migrate after an upgrade.";
+#[error(code = 3)]
+const ENotUpgrade: vector<u8> = b"The stored version is already current; migrate only applies after an upgrade.";
+#[error(code = 4)]
+const ENoPendingTransfer: vector<u8> = b"There is no pending cap transfer.";
+#[error(code = 5)]
+const ENotPendingAdmin: vector<u8> = b"You are not the proposed cap recipient.";
+#[error(code = 6)]
+const ETransferNotAccepted: vector<u8> = b"The proposed recipient has not accepted the transfer.";
 
 const BPS_DENOM: u64 = 10_000;
 /// Bumped together with any package upgrade that must invalidate the

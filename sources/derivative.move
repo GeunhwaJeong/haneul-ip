@@ -31,20 +31,34 @@ use haneul_ip::terms::{Self, Terms, TermsRegistry};
 use std::string::String;
 use std::type_name::{Self, TypeName};
 
-const EWrongLicense: u64 = 0;
-const EDerivativesNotAllowed: u64 = 1;
-const ENotApprovedLicensee: u64 = 2;
-const ENotReciprocal: u64 = 3;
-const EDuplicateParent: u64 = 4;
-const ETooManyParents: u64 = 5;
-const ETooManyAncestors: u64 = 6;
-const ENoParents: u64 = 7;
-const EStackTooHigh: u64 = 8;
-const EStackAboveMax: u64 = 9;
-const ETermsNotAttached: u64 = 10;
-const EWrongCurrency: u64 = 11;
-const EFeeAboveMax: u64 = 12;
-const EInsufficientPayment: u64 = 13;
+#[error(code = 0)]
+const EWrongLicense: vector<u8> = b"The license was not minted by this parent IP.";
+#[error(code = 1)]
+const EDerivativesNotAllowed: vector<u8> = b"These terms do not allow derivatives.";
+#[error(code = 2)]
+const ENotApprovedLicensee: vector<u8> = b"The registrant is not on the parent's approval allowlist.";
+#[error(code = 3)]
+const ENotReciprocal: vector<u8> = b"Deriving from a derivative needs terms marked reciprocal.";
+#[error(code = 4)]
+const EDuplicateParent: vector<u8> = b"This parent is already linked.";
+#[error(code = 5)]
+const ETooManyParents: vector<u8> = b"The parent limit has been reached.";
+#[error(code = 6)]
+const ETooManyAncestors: vector<u8> = b"The ancestor limit has been reached.";
+#[error(code = 7)]
+const ENoParents: vector<u8> = b"A derivative needs at least one parent.";
+#[error(code = 8)]
+const EStackTooHigh: vector<u8> = b"The combined royalty stack exceeds 100% (10000 bps).";
+#[error(code = 9)]
+const EStackAboveMax: vector<u8> = b"The royalty stack exceeds the registrant's stated maximum.";
+#[error(code = 10)]
+const ETermsNotAttached: vector<u8> = b"These terms are not attached to the parent IP.";
+#[error(code = 11)]
+const EWrongCurrency: vector<u8> = b"The payment coin type does not match the terms' currency.";
+#[error(code = 12)]
+const EFeeAboveMax: vector<u8> = b"The minting fee exceeds the registrant's stated maximum.";
+#[error(code = 13)]
+const EInsufficientPayment: vector<u8> = b"The payment does not cover the minting fee.";
 
 const BPS_DENOM: u64 = 10_000;
 /// Product bounds, not gas bounds (a Move loop over a VecMap is

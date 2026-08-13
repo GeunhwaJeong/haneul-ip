@@ -36,14 +36,22 @@ use haneul_ip::protocol::{Self, ProtocolConfig};
 use haneul_ip::terms::{Self, Terms, TermsRegistry};
 use std::type_name;
 
-const ETermsNotAttached: u64 = 0;
-const ENotReciprocal: u64 = 1;
-const EWrongCurrency: u64 = 2;
-const EFeeAboveMax: u64 = 3;
-const ENotTransferable: u64 = 4;
-const EInsufficientPayment: u64 = 5;
-const EFeeRequired: u64 = 6;
-const ENotApprovedLicensee: u64 = 7;
+#[error(code = 0)]
+const ETermsNotAttached: vector<u8> = b"These terms are not attached to the licensor IP.";
+#[error(code = 1)]
+const ENotReciprocal: vector<u8> = b"A derivative can only license terms marked reciprocal.";
+#[error(code = 2)]
+const EWrongCurrency: vector<u8> = b"The payment coin type does not match the terms' currency.";
+#[error(code = 3)]
+const EFeeAboveMax: vector<u8> = b"The minting fee exceeds the buyer's stated maximum.";
+#[error(code = 4)]
+const ENotTransferable: vector<u8> = b"This license is not transferable.";
+#[error(code = 5)]
+const EInsufficientPayment: vector<u8> = b"The payment does not cover the minting fee.";
+#[error(code = 6)]
+const EFeeRequired: vector<u8> = b"These terms charge a minting fee; use mint instead.";
+#[error(code = 7)]
+const ENotApprovedLicensee: vector<u8> = b"The minter is not on the licensor's approval allowlist.";
 
 public struct License has key {
     id: UID,

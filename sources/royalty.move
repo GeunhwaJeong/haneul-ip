@@ -30,8 +30,10 @@ use haneul_ip::ip::{Self, IPAsset, IPOwnerCap};
 use haneul_ip::protocol::{Self, ProtocolConfig};
 use std::type_name::{Self, TypeName};
 
-const EZeroPayment: u64 = 0;
-const ENotAncestor: u64 = 1;
+#[error(code = 0)]
+const EZeroPayment: vector<u8> = b"The payment must be greater than zero.";
+#[error(code = 1)]
+const ENotAncestor: vector<u8> = b"The cap's IP is not an ancestor of this IP asset.";
 
 public struct RoyaltyPaid has copy, drop {
     ip: ID,

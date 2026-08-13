@@ -33,20 +33,34 @@ use haneul_ip::protocol::ProtocolCap;
 use std::bcs;
 use std::string::String;
 
-const ENotArbiter: u64 = 0;
-const ETagNotAllowed: u64 = 1;
-const EBadEvidence: u64 = 2;
-const EEvidenceUsed: u64 = 3;
-const ENotInDispute: u64 = 4;
-const EWrongTarget: u64 = 5;
-const ENotInitiator: u64 = 6;
-const ENotUpheld: u64 = 7;
-const ENotDescendant: u64 = 8;
-const EAlreadyPropagated: u64 = 9;
-const ESourceNotClosed: u64 = 10;
-const EDisputeNotFound: u64 = 11;
-const EWrongVersion: u64 = 12;
-const ENotUpgrade: u64 = 13;
+#[error(code = 0)]
+const ENotArbiter: vector<u8> = b"Only the arbiter can judge a dispute.";
+#[error(code = 1)]
+const ETagNotAllowed: vector<u8> = b"This dispute tag is not on the whitelist.";
+#[error(code = 2)]
+const EBadEvidence: vector<u8> = b"The evidence hash must be exactly 32 bytes.";
+#[error(code = 3)]
+const EEvidenceUsed: vector<u8> = b"This evidence already backs a dispute against this target.";
+#[error(code = 4)]
+const ENotInDispute: vector<u8> = b"This dispute is not awaiting judgement.";
+#[error(code = 5)]
+const EWrongTarget: vector<u8> = b"This dispute does not target the given IP asset.";
+#[error(code = 6)]
+const ENotInitiator: vector<u8> = b"Only the initiator or the arbiter may act on this dispute.";
+#[error(code = 7)]
+const ENotUpheld: vector<u8> = b"This dispute is not upheld.";
+#[error(code = 8)]
+const ENotDescendant: vector<u8> = b"The given IP is not a descendant of the dispute's target.";
+#[error(code = 9)]
+const EAlreadyPropagated: vector<u8> = b"This dispute was already propagated to that descendant.";
+#[error(code = 10)]
+const ESourceNotClosed: vector<u8> = b"The source dispute is still open.";
+#[error(code = 11)]
+const EDisputeNotFound: vector<u8> = b"No dispute is registered under this id.";
+#[error(code = 12)]
+const EWrongVersion: vector<u8> = b"The registry's version does not match the package; call migrate after an upgrade.";
+#[error(code = 13)]
+const ENotUpgrade: vector<u8> = b"The stored version is already current; migrate only applies after an upgrade.";
 
 const STATE_IN_DISPUTE: u8 = 0;
 const STATE_UPHELD: u8 = 1;
