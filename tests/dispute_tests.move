@@ -72,11 +72,17 @@ fun resolve_as(s: &mut Scenario, resolver: address, ip_id: ID, dispute_id: u64) 
     ts::return_shared(reg);
 }
 
-fun propagate_as(s: &mut Scenario, caller: address, child_ip: ID, source_id: u64): u64 {
+fun propagate_as(
+    s: &mut Scenario,
+    caller: address,
+    child_ip: ID,
+    source_id: u64,
+    clock: &Clock,
+): u64 {
     s.next_tx(caller);
     let mut reg = s.take_shared<DisputeRegistry>();
     let mut child = s.take_shared_by_id<IPAsset>(child_ip);
-    let id = dispute::propagate(&mut reg, &mut child, source_id, s.ctx());
+    let id = dispute::propagate(&mut reg, &mut child, source_id, clock, s.ctx());
     ts::return_shared(child);
     ts::return_shared(reg);
     id
@@ -349,19 +355,22 @@ fun propagation_tags_descendant() {
     let mut s = ts::begin(ADMIN);
     setup(&mut s);
     setup_tag(&mut s);
-    let clock = new_clock(&mut s);
+    let mut clock = new_clock(&mut s);
     let terms_id = std_terms(&mut s, 1_000, 0);
     let (root_ip, _) = root_with_terms(&mut s, ALICE, 1, terms_id, &clock);
     let (child_ip, _) = make_child(&mut s, BOB, root_ip, terms_id, 0, 2, &clock);
     let source_id = tag_ip(&mut s, root_ip, 9, &clock);
 
-    // Anyone (CAROL) can propagate.
-    let propagated_id = propagate_as(&mut s, CAROL, child_ip, source_id);
+    // Anyone (CAROL) can propagate; the propagation moment is
+    // recorded as the new dispute's raise time.
+    clock.set_for_testing(7_000);
+    let propagated_id = propagate_as(&mut s, CAROL, child_ip, source_id, &clock);
     assert_tagged(&mut s, child_ip, true);
 
     s.next_tx(ADMIN);
     let reg = s.take_shared<DisputeRegistry>();
     assert!(dispute::state(&reg, propagated_id) == UPHELD);
+    assert!(dispute::raised_at_ms(&reg, propagated_id) == 7_000);
     ts::return_shared(reg);
     clock.destroy_for_testing();
     s.end();
@@ -378,7 +387,7 @@ fun propagation_to_unrelated_ip_aborts() {
     let (root_ip, _) = root_with_terms(&mut s, ALICE, 1, terms_id, &clock);
     let (stranger_ip, _) = root_with_terms(&mut s, BOB, 2, terms_id, &clock);
     let source_id = tag_ip(&mut s, root_ip, 9, &clock);
-    propagate_as(&mut s, CAROL, stranger_ip, source_id);
+    propagate_as(&mut s, CAROL, stranger_ip, source_id, &clock);
     abort 99
 }
 
@@ -393,8 +402,8 @@ fun double_propagation_aborts() {
     let (root_ip, _) = root_with_terms(&mut s, ALICE, 1, terms_id, &clock);
     let (child_ip, _) = make_child(&mut s, BOB, root_ip, terms_id, 0, 2, &clock);
     let source_id = tag_ip(&mut s, root_ip, 9, &clock);
-    propagate_as(&mut s, CAROL, child_ip, source_id);
-    propagate_as(&mut s, CAROL, child_ip, source_id);
+    propagate_as(&mut s, CAROL, child_ip, source_id, &clock);
+    propagate_as(&mut s, CAROL, child_ip, source_id, &clock);
     abort 99
 }
 
@@ -410,7 +419,7 @@ fun propagation_from_dismissed_dispute_aborts() {
     let (child_ip, _) = make_child(&mut s, BOB, root_ip, terms_id, 0, 2, &clock);
     let dispute_id = raise_as(&mut s, CAROL, root_ip, 9, &clock);
     judge_as(&mut s, ADMIN, root_ip, dispute_id, false);
-    propagate_as(&mut s, CAROL, child_ip, dispute_id);
+    propagate_as(&mut s, CAROL, child_ip, dispute_id, &clock);
     abort 99
 }
 
@@ -426,7 +435,7 @@ fun resolving_propagated_before_source_aborts() {
     let (root_ip, _) = root_with_terms(&mut s, ALICE, 1, terms_id, &clock);
     let (child_ip, _) = make_child(&mut s, BOB, root_ip, terms_id, 0, 2, &clock);
     let source_id = tag_ip(&mut s, root_ip, 9, &clock);
-    let propagated_id = propagate_as(&mut s, CAROL, child_ip, source_id);
+    let propagated_id = propagate_as(&mut s, CAROL, child_ip, source_id, &clock);
     resolve_as(&mut s, BOB, child_ip, propagated_id);
     abort 99
 }
@@ -442,7 +451,7 @@ fun resolving_propagated_after_source_closes() {
     let (root_ip, _) = root_with_terms(&mut s, ALICE, 1, terms_id, &clock);
     let (child_ip, _) = make_child(&mut s, BOB, root_ip, terms_id, 0, 2, &clock);
     let source_id = tag_ip(&mut s, root_ip, 9, &clock);
-    let propagated_id = propagate_as(&mut s, CAROL, child_ip, source_id);
+    let propagated_id = propagate_as(&mut s, CAROL, child_ip, source_id, &clock);
 
     // ADMIN raised the source dispute in tag_ip, so ADMIN resolves it.
     resolve_as(&mut s, ADMIN, root_ip, source_id);

@@ -242,6 +242,7 @@ public fun propagate(
     reg: &mut DisputeRegistry,
     child: &mut IPAsset,
     source_dispute_id: u64,
+    clock: &Clock,
     ctx: &TxContext,
 ): u64 {
     assert_current_version(reg);
@@ -266,7 +267,7 @@ public fun propagate(
         tag: source_tag,
         state: STATE_UPHELD,
         source: source_dispute_id,
-        raised_at_ms: 0,
+        raised_at_ms: clock.timestamp_ms(),
     });
     ip::add_tag(child);
     event::emit(DisputePropagated {
@@ -341,6 +342,11 @@ public fun state(reg: &DisputeRegistry, dispute_id: u64): u8 {
 public fun tag(reg: &DisputeRegistry, dispute_id: u64): String {
     assert!(reg.disputes.contains(dispute_id), EDisputeNotFound);
     reg.disputes.borrow(dispute_id).tag
+}
+
+public fun raised_at_ms(reg: &DisputeRegistry, dispute_id: u64): u64 {
+    assert!(reg.disputes.contains(dispute_id), EDisputeNotFound);
+    reg.disputes.borrow(dispute_id).raised_at_ms
 }
 
 public fun arbiter(reg: &DisputeRegistry): address { reg.arbiter }
