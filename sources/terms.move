@@ -209,9 +209,13 @@ public fun expiration_ms(t: &Terms): u64 { t.expiration_ms }
 
 public fun commercial_use(t: &Terms): bool { t.commercial_use }
 
+public fun commercial_attribution(t: &Terms): bool { t.commercial_attribution }
+
 public fun commercial_rev_share_bps(t: &Terms): u64 { t.commercial_rev_share_bps }
 
 public fun derivatives_allowed(t: &Terms): bool { t.derivatives_allowed }
+
+public fun derivatives_attribution(t: &Terms): bool { t.derivatives_attribution }
 
 public fun derivatives_approval(t: &Terms): bool { t.derivatives_approval }
 
