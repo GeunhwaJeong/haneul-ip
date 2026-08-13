@@ -187,20 +187,45 @@ fun unallowed_tag_aborts() {
     abort 99
 }
 
-/// One piece of evidence backs at most one dispute (anti-spam).
+/// One piece of evidence backs at most one dispute per target
+/// (anti-spam): re-filing the same evidence against the same IP is
+/// blocked even after the first dispute is dismissed.
 #[test]
 #[expected_failure(abort_code = haneul_ip::dispute::EEvidenceUsed)]
-fun reused_evidence_aborts() {
+fun reused_evidence_same_target_aborts() {
+    let mut s = ts::begin(ADMIN);
+    setup(&mut s);
+    setup_tag(&mut s);
+    let clock = new_clock(&mut s);
+    let terms_id = std_terms(&mut s, 1_000, 0);
+    let (ip_id, _) = root_with_terms(&mut s, ALICE, 1, terms_id, &clock);
+    let dispute_id = raise_as(&mut s, CAROL, ip_id, 9, &clock);
+    judge_as(&mut s, ADMIN, ip_id, dispute_id, false);
+    raise_as(&mut s, CAROL, ip_id, 9, &clock);
+    abort 99
+}
+
+/// Uniqueness is scoped per target: one work plagiarized by two
+/// parties is two targets, each disputable with the same evidence.
+#[test]
+fun same_evidence_different_targets_allowed() {
     let mut s = ts::begin(ADMIN);
     setup(&mut s);
     setup_tag(&mut s);
     let clock = new_clock(&mut s);
     let terms_id = std_terms(&mut s, 1_000, 0);
     let (ip_a, _) = root_with_terms(&mut s, ALICE, 1, terms_id, &clock);
-    let (ip_b, _) = root_with_terms(&mut s, ALICE, 2, terms_id, &clock);
-    raise_as(&mut s, CAROL, ip_a, 9, &clock);
-    raise_as(&mut s, CAROL, ip_b, 9, &clock);
-    abort 99
+    let (ip_b, _) = root_with_terms(&mut s, BOB, 2, terms_id, &clock);
+    let dispute_a = raise_as(&mut s, CAROL, ip_a, 9, &clock);
+    let dispute_b = raise_as(&mut s, CAROL, ip_b, 9, &clock);
+
+    s.next_tx(ADMIN);
+    let reg = s.take_shared<DisputeRegistry>();
+    assert!(dispute::state(&reg, dispute_a) == IN_DISPUTE);
+    assert!(dispute::state(&reg, dispute_b) == IN_DISPUTE);
+    ts::return_shared(reg);
+    clock.destroy_for_testing();
+    s.end();
 }
 
 #[test]

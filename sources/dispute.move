@@ -10,7 +10,8 @@
 /// Rights are data, enforcement is a money switch.
 ///
 /// Behaviors:
-///  - whitelisted tags, evidence-hash uniqueness (anti-spam),
+///  - whitelisted tags, per-target evidence-hash uniqueness
+///    (anti-spam),
 ///  - propagation: once an IP is tagged, ANYONE may extend the tag to
 ///    its descendants (the derivative tree monetizes the infringing
 ///    work, so it freezes with it),
@@ -69,7 +70,10 @@ public struct DisputeRegistry has key {
     /// Whitelisted dispute tags (e.g. "PLAGIARISM").
     tags: VecSet<String>,
     disputes: Table<u64, Dispute>,
-    /// Evidence may back at most one dispute (anti-spam).
+    /// bcs(target, evidence_hash) -> used. Evidence may back at most
+    /// one dispute PER TARGET (anti-spam): re-filing the same evidence
+    /// against the same IP is blocked, but one work plagiarized by two
+    /// parties is two targets, each disputable with the same evidence.
     used_evidence: Table<vector<u8>, bool>,
     /// bcs(child, source_dispute) -> already propagated.
     propagated: Table<vector<u8>, bool>,
@@ -171,8 +175,9 @@ public fun raise(
     assert_current_version(reg);
     assert!(reg.tags.contains(&tag), ETagNotAllowed);
     assert!(evidence_hash.length() == EVIDENCE_HASH_LENGTH, EBadEvidence);
-    assert!(!reg.used_evidence.contains(evidence_hash), EEvidenceUsed);
-    reg.used_evidence.add(evidence_hash, true);
+    let evidence_key = evidence_key(object::id(target), &evidence_hash);
+    assert!(!reg.used_evidence.contains(evidence_key), EEvidenceUsed);
+    reg.used_evidence.add(evidence_key, true);
 
     let dispute_id = reg.count + 1;
     reg.count = dispute_id;
@@ -317,6 +322,12 @@ fun assert_current_version(reg: &DisputeRegistry) {
 fun propagation_key(child: ID, source_dispute_id: u64): vector<u8> {
     let mut key = bcs::to_bytes(&child);
     key.append(bcs::to_bytes(&source_dispute_id));
+    key
+}
+
+fun evidence_key(target: ID, evidence_hash: &vector<u8>): vector<u8> {
+    let mut key = bcs::to_bytes(&target);
+    key.append(*evidence_hash);
     key
 }
 
