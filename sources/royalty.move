@@ -54,9 +54,11 @@ public struct AncestorClaimed has copy, drop {
     amount: u64,
 }
 
-/// Pays royalties (or any revenue) to an IP. Any coin type is
-/// accepted; the terms' `currency` only binds minting fees. The
-/// ancestor cuts accrue inside the target's pool immediately.
+/// Pays royalties (or any revenue) to an IP, in any coin type the
+/// target has opted into (`accepted_currencies`; other types abort
+/// with `ECurrencyNotAccepted`). The terms' `currency` binds minting
+/// fees only, not payments. The ancestor cuts accrue inside the
+/// target's pool immediately.
 public fun pay<T>(
     cfg: &ProtocolConfig,
     target: &mut IPAsset,
