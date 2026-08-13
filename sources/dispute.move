@@ -62,11 +62,15 @@ const EWrongVersion: vector<u8> = b"The registry's version does not match the pa
 #[error(code = 13)]
 const ENotUpgrade: vector<u8> = b"The stored version is already current; migrate only applies after an upgrade.";
 
-const STATE_IN_DISPUTE: u8 = 0;
-const STATE_UPHELD: u8 = 1;
-const STATE_DISMISSED: u8 = 2;
-const STATE_CANCELLED: u8 = 3;
-const STATE_RESOLVED: u8 = 4;
+/// Lifecycle of a dispute. An enum rather than raw u8 codes so a
+/// state outside these five cannot exist by construction.
+public enum DisputeState has copy, drop, store {
+    InDispute,
+    Upheld,
+    Dismissed,
+    Cancelled,
+    Resolved,
+}
 
 const EVIDENCE_HASH_LENGTH: u64 = 32;
 /// See `protocol.move`: bumped when an upgrade must invalidate the
@@ -101,7 +105,7 @@ public struct Dispute has store {
     /// 32-byte hash of off-chain evidence.
     evidence_hash: vector<u8>,
     tag: String,
-    state: u8,
+    state: DisputeState,
     /// 0 for an original dispute; the source dispute id when this tag
     /// was propagated down the derivative tree.
     source: u64,
@@ -200,7 +204,7 @@ public fun raise(
         initiator: ctx.sender(),
         evidence_hash,
         tag,
-        state: STATE_IN_DISPUTE,
+        state: DisputeState::InDispute,
         source: 0,
         raised_at_ms: clock.timestamp_ms(),
     });
@@ -226,13 +230,13 @@ public fun judge(
     assert!(ctx.sender() == reg.arbiter, ENotArbiter);
     assert!(reg.disputes.contains(dispute_id), EDisputeNotFound);
     let dispute = reg.disputes.borrow_mut(dispute_id);
-    assert!(dispute.state == STATE_IN_DISPUTE, ENotInDispute);
+    assert!(dispute.state == DisputeState::InDispute, ENotInDispute);
     assert!(dispute.target == object::id(target), EWrongTarget);
     if (uphold) {
-        dispute.state = STATE_UPHELD;
+        dispute.state = DisputeState::Upheld;
         ip::add_tag(target);
     } else {
-        dispute.state = STATE_DISMISSED;
+        dispute.state = DisputeState::Dismissed;
     };
     event::emit(DisputeJudged { dispute_id, upheld: uphold });
 }
@@ -242,9 +246,9 @@ public fun cancel(reg: &mut DisputeRegistry, dispute_id: u64, ctx: &TxContext) {
     assert_current_version(reg);
     assert!(reg.disputes.contains(dispute_id), EDisputeNotFound);
     let dispute = reg.disputes.borrow_mut(dispute_id);
-    assert!(dispute.state == STATE_IN_DISPUTE, ENotInDispute);
+    assert!(dispute.state == DisputeState::InDispute, ENotInDispute);
     assert!(ctx.sender() == dispute.initiator, ENotInitiator);
-    dispute.state = STATE_CANCELLED;
+    dispute.state = DisputeState::Cancelled;
     event::emit(DisputeCancelled { dispute_id });
 }
 
@@ -265,7 +269,7 @@ public fun propagate(
         let source = reg.disputes.borrow(source_dispute_id);
         (source.target, source.tag, source.evidence_hash, source.state)
     };
-    assert!(source_state == STATE_UPHELD, ENotUpheld);
+    assert!(source_state == DisputeState::Upheld, ENotUpheld);
     assert!(child.is_ancestor_of(source_target), ENotDescendant);
 
     let key = propagation_key(object::id(child), source_dispute_id);
@@ -279,7 +283,7 @@ public fun propagate(
         initiator: ctx.sender(),
         evidence_hash: source_evidence,
         tag: source_tag,
-        state: STATE_UPHELD,
+        state: DisputeState::Upheld,
         source: source_dispute_id,
         raised_at_ms: clock.timestamp_ms(),
     });
@@ -310,14 +314,14 @@ public fun resolve(
     if (source_id > 0) {
         let source_state = reg.disputes.borrow(source_id).state;
         assert!(
-            source_state == STATE_DISMISSED ||
-            source_state == STATE_CANCELLED ||
-            source_state == STATE_RESOLVED,
+            source_state == DisputeState::Dismissed ||
+            source_state == DisputeState::Cancelled ||
+            source_state == DisputeState::Resolved,
             ESourceNotClosed,
         );
     };
     let dispute = reg.disputes.borrow_mut(dispute_id);
-    assert!(dispute.state == STATE_UPHELD, ENotUpheld);
+    assert!(dispute.state == DisputeState::Upheld, ENotUpheld);
     assert!(dispute.target == object::id(target), EWrongTarget);
     if (source_id == 0) {
         assert!(
@@ -325,7 +329,7 @@ public fun resolve(
             ENotInitiator,
         );
     };
-    dispute.state = STATE_RESOLVED;
+    dispute.state = DisputeState::Resolved;
     ip::remove_tag(target);
     event::emit(DisputeResolved { dispute_id, resolver: ctx.sender() });
 }
@@ -348,10 +352,22 @@ fun evidence_key(target: ID, evidence_hash: &vector<u8>): vector<u8> {
 
 // === Views ===
 
-public fun state(reg: &DisputeRegistry, dispute_id: u64): u8 {
+public fun state(reg: &DisputeRegistry, dispute_id: u64): DisputeState {
     assert!(reg.disputes.contains(dispute_id), EDisputeNotFound);
     reg.disputes.borrow(dispute_id).state
 }
+
+// Variant values, for callers comparing against `state`.
+
+public fun in_dispute(): DisputeState { DisputeState::InDispute }
+
+public fun upheld(): DisputeState { DisputeState::Upheld }
+
+public fun dismissed(): DisputeState { DisputeState::Dismissed }
+
+public fun cancelled(): DisputeState { DisputeState::Cancelled }
+
+public fun resolved(): DisputeState { DisputeState::Resolved }
 
 public fun tag(reg: &DisputeRegistry, dispute_id: u64): String {
     assert!(reg.disputes.contains(dispute_id), EDisputeNotFound);

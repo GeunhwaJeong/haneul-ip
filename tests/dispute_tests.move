@@ -31,11 +31,6 @@ const ALICE: address = @0xA11CE;
 const BOB: address = @0xB0B;
 const CAROL: address = @0xCA401;
 
-const IN_DISPUTE: u8 = 0;
-const UPHELD: u8 = 1;
-const DISMISSED: u8 = 2;
-const CANCELLED: u8 = 3;
-const RESOLVED: u8 = 4;
 
 fun raise_as(
     s: &mut Scenario,
@@ -116,7 +111,7 @@ fun uphold_tags_and_resolve_untags() {
 
     s.next_tx(ADMIN);
     let reg = s.take_shared<DisputeRegistry>();
-    assert!(dispute::state(&reg, dispute_id) == RESOLVED);
+    assert!(dispute::state(&reg, dispute_id) == dispute::resolved());
     ts::return_shared(reg);
     clock.destroy_for_testing();
     s.end();
@@ -137,7 +132,7 @@ fun dismissal_leaves_ip_untagged() {
 
     s.next_tx(ADMIN);
     let reg = s.take_shared<DisputeRegistry>();
-    assert!(dispute::state(&reg, dispute_id) == DISMISSED);
+    assert!(dispute::state(&reg, dispute_id) == dispute::dismissed());
     ts::return_shared(reg);
     clock.destroy_for_testing();
     s.end();
@@ -227,8 +222,8 @@ fun same_evidence_different_targets_allowed() {
 
     s.next_tx(ADMIN);
     let reg = s.take_shared<DisputeRegistry>();
-    assert!(dispute::state(&reg, dispute_a) == IN_DISPUTE);
-    assert!(dispute::state(&reg, dispute_b) == IN_DISPUTE);
+    assert!(dispute::state(&reg, dispute_a) == dispute::in_dispute());
+    assert!(dispute::state(&reg, dispute_b) == dispute::in_dispute());
     ts::return_shared(reg);
     clock.destroy_for_testing();
     s.end();
@@ -266,7 +261,7 @@ fun initiator_can_cancel_before_judgement() {
     s.next_tx(CAROL);
     let mut reg = s.take_shared<DisputeRegistry>();
     dispute::cancel(&mut reg, dispute_id, s.ctx());
-    assert!(dispute::state(&reg, dispute_id) == CANCELLED);
+    assert!(dispute::state(&reg, dispute_id) == dispute::cancelled());
     ts::return_shared(reg);
     clock.destroy_for_testing();
     s.end();
@@ -342,7 +337,7 @@ fun arbiter_can_resolve_original_dispute() {
 
     s.next_tx(ADMIN);
     let reg = s.take_shared<DisputeRegistry>();
-    assert!(dispute::state(&reg, dispute_id) == RESOLVED);
+    assert!(dispute::state(&reg, dispute_id) == dispute::resolved());
     ts::return_shared(reg);
     clock.destroy_for_testing();
     s.end();
@@ -369,7 +364,7 @@ fun propagation_tags_descendant() {
 
     s.next_tx(ADMIN);
     let reg = s.take_shared<DisputeRegistry>();
-    assert!(dispute::state(&reg, propagated_id) == UPHELD);
+    assert!(dispute::state(&reg, propagated_id) == dispute::upheld());
     assert!(dispute::raised_at_ms(&reg, propagated_id) == 7_000);
     ts::return_shared(reg);
     clock.destroy_for_testing();
@@ -525,7 +520,7 @@ fun raise_starts_in_dispute_state() {
 
     s.next_tx(ADMIN);
     let reg = s.take_shared<DisputeRegistry>();
-    assert!(dispute::state(&reg, dispute_id) == IN_DISPUTE);
+    assert!(dispute::state(&reg, dispute_id) == dispute::in_dispute());
     ts::return_shared(reg);
     clock.destroy_for_testing();
     s.end();
