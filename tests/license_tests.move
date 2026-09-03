@@ -79,12 +79,12 @@ fun mint_fee_above_max_fee_aborts() {
     s.return_to_sender(cap);
 
     s.next_tx(BOB);
-    let cfg = s.take_shared<ProtocolConfig>();
+    let mut cfg = s.take_shared<ProtocolConfig>();
     let reg = s.take_shared<TermsRegistry>();
     let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
     let mut payment = mint_haneul(&mut s, 500);
     let license =
-        license::mint<HANEUL>(&cfg, &mut asset, &reg, terms_id, &mut payment, 150, &clock, s.ctx());
+        license::mint<HANEUL>(&mut cfg, &mut asset, &reg, terms_id, &mut payment, 150, &clock, s.ctx());
     license::keep(license, s.ctx());
     abort 99
 }
@@ -112,12 +112,12 @@ fun mint_in_wrong_currency_aborts() {
     let (ip_id, _) = root_with_terms(&mut s, ALICE, 1, terms_id, &clock);
 
     s.next_tx(BOB);
-    let cfg = s.take_shared<ProtocolConfig>();
+    let mut cfg = s.take_shared<ProtocolConfig>();
     let reg = s.take_shared<TermsRegistry>();
     let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
     let mut payment = haneul::coin::mint_for_testing<USDX>(100, s.ctx());
     let license =
-        license::mint<USDX>(&cfg, &mut asset, &reg, terms_id, &mut payment, 0, &clock, s.ctx());
+        license::mint<USDX>(&mut cfg, &mut asset, &reg, terms_id, &mut payment, 0, &clock, s.ctx());
     license::keep(license, s.ctx());
     abort 99
 }

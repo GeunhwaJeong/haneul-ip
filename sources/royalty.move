@@ -62,7 +62,7 @@ public struct AncestorClaimed has copy, drop {
 /// fees only, not payments. The ancestor cuts accrue inside the
 /// target's pool immediately.
 public fun pay<T>(
-    cfg: &ProtocolConfig,
+    cfg: &mut ProtocolConfig,
     target: &mut IPAsset,
     mut payment: Coin<T>,
     clock: &Clock,
@@ -72,7 +72,7 @@ public fun pay<T>(
     ip::assert_alive(target, clock);
     let gross = payment.value();
     assert!(gross > 0, EZeroPayment);
-    let protocol_fee = protocol::collect(cfg, &mut payment, ctx);
+    let protocol_fee = protocol::collect(cfg, &mut payment);
     event::emit(RoyaltyPaid {
         ip: object::id(target),
         payer: ctx.sender(),

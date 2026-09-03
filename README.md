@@ -30,7 +30,7 @@ Registration is self-attested: the chain records who claimed what and when, and 
 | `derivative` | Derivative registration as a hot-potato builder: begin, add each parent, finish; the ancestor royalty map is merged once at registration |
 | `royalty` | Payments in, claims out; ancestor shares accrue per payment and are pulled with the ancestor's own capability |
 | `dispute` | Raise, judge, resolve; an upheld dispute freezes the target's licensing and money paths, and propagates down the derivative tree |
-| `protocol` | Shared levers: a circuit breaker over every money path and a protocol fee hook (rate starts at zero) |
+| `protocol` | Shared levers: a circuit breaker over every money path, a protocol fee hook (rate starts at zero) that accrues into an on-chain vault, and the admin capability with its three-step handoff |
 | `haneul_ip` | Package identity: the one-time witness, the Publisher claim, and the Display templates wallets render objects with |
 
 ## Design notes
@@ -40,6 +40,7 @@ Registration is self-attested: the chain records who claimed what and when, and 
 - **Slippage guards.** Minting and registration take caller-side limits (`max_fee`, `max_total_stack_bps`), because a licensor can change fees and shares between a buyer signing and the transaction executing.
 - **Mint-time snapshots.** A sold license keeps the terms it was sold under; later changes by the licensor apply only to future sales.
 - **Opt-in revenue currencies.** An asset only accepts deposits in coin types it opted into (its terms' currencies, plus any the owner adds), so third parties cannot bloat it with junk-coin pools. Stopping a currency never blocks claims on funds already received.
+- **Fees accrue, they are not mailed.** The protocol's cut of a payment joins a per-currency vault inside the config object instead of being transferred out per payment, so a payment never creates a coin object for the treasury and the protocol's income is readable as state. The capability holder withdraws it.
 - **Consent before money.** Approval-gated terms check the licensor's on-chain allowlist at mint time, so nobody can end up holding a paid license they were never allowed to use.
 
 ## Building and testing
@@ -53,7 +54,7 @@ haneul move test --build-env mainnet
 
 The `--build-env` flag selects the framework dependency set; the package itself has no environment-specific code.
 
-The test suite currently covers 124 cases, 79 of which assert failure paths (wrong capabilities, exceeded limits, frozen assets, replayed evidence, and similar).
+The test suite currently covers 125 cases, 80 of which assert failure paths (wrong capabilities, exceeded limits, frozen assets, replayed evidence, and similar).
 
 ## Security
 

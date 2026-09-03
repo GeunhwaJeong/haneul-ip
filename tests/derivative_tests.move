@@ -65,7 +65,7 @@ fun make_child_direct(
     clock: &Clock,
 ): (ID, ID) {
     s.next_tx(creator);
-    let cfg = s.take_shared<ProtocolConfig>();
+    let mut cfg = s.take_shared<ProtocolConfig>();
     let reg = s.take_shared<TermsRegistry>();
     let mut parent = s.take_shared_by_id<IPAsset>(parent_ip);
     let mut payment = mint_haneul(s, pay_amount);
@@ -74,7 +74,7 @@ fun make_child_direct(
         &mut builder,
         &mut parent,
         &reg,
-        &cfg,
+        &mut cfg,
         terms_id,
         &mut payment,
         max_fee,
@@ -473,7 +473,7 @@ fun ninth_parent_aborts() {
     };
 
     s.next_tx(BOB);
-    let cfg = s.take_shared<ProtocolConfig>();
+    let mut cfg = s.take_shared<ProtocolConfig>();
     let reg = s.take_shared<TermsRegistry>();
     let mut payment = mint_haneul(&mut s, 0);
     let mut builder = derivative::begin(str(b"crowded"), hash(99), str(b""));
@@ -484,7 +484,7 @@ fun ninth_parent_aborts() {
             &mut builder,
             &mut parent,
             &reg,
-            &cfg,
+            &mut cfg,
             terms_id,
             &mut payment,
             0,

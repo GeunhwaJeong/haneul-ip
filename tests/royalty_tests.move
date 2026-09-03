@@ -182,10 +182,10 @@ fun multi_currency_pools_are_independent() {
 
     pay_royalty(&mut s, CAROL, child_ip, 1_000, &clock);
     s.next_tx(CAROL);
-    let cfg = s.take_shared<ProtocolConfig>();
+    let mut cfg = s.take_shared<ProtocolConfig>();
     let mut child = s.take_shared_by_id<IPAsset>(child_ip);
     let usdx = haneul::coin::mint_for_testing<USDX>(2_000, s.ctx());
-    royalty::pay<USDX>(&cfg, &mut child, usdx, &clock, s.ctx());
+    royalty::pay<USDX>(&mut cfg, &mut child, usdx, &clock, s.ctx());
     assert!(ip::claimable_by_ancestor<HANEUL>(&child, root_ip) == 100);
     assert!(ip::claimable_by_ancestor<USDX>(&child, root_ip) == 200);
     assert!(ip::claimable_by_owner<HANEUL>(&child) == 900);
@@ -277,10 +277,10 @@ fun payment_in_unaccepted_currency_aborts() {
     let (ip_id, _) = root_with_terms(&mut s, ALICE, 1, terms_id, &clock);
 
     s.next_tx(CAROL);
-    let cfg = s.take_shared<ProtocolConfig>();
+    let mut cfg = s.take_shared<ProtocolConfig>();
     let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
     let junk = haneul::coin::mint_for_testing<USDX>(1, s.ctx());
-    royalty::pay<USDX>(&cfg, &mut asset, junk, &clock, s.ctx());
+    royalty::pay<USDX>(&mut cfg, &mut asset, junk, &clock, s.ctx());
     abort 99
 }
 
@@ -297,13 +297,13 @@ fun stopped_currency_stays_claimable() {
     let (ip_id, cap_id) = root_with_terms(&mut s, ALICE, 1, terms_id, &clock);
 
     s.next_tx(ALICE);
-    let cfg = s.take_shared<ProtocolConfig>();
+    let mut cfg = s.take_shared<ProtocolConfig>();
     let reg = s.take_shared<TermsRegistry>();
     let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
     let cap = s.take_from_sender_by_id<IPOwnerCap>(cap_id);
     ip::accept_currency<USDX>(&mut asset, &cap);
     let usdx = haneul::coin::mint_for_testing<USDX>(1_000, s.ctx());
-    royalty::pay<USDX>(&cfg, &mut asset, usdx, &clock, s.ctx());
+    royalty::pay<USDX>(&mut cfg, &mut asset, usdx, &clock, s.ctx());
     ip::stop_accepting_currency<USDX>(&mut asset, &cap, &reg);
     assert!(!ip::is_currency_accepted<USDX>(&asset));
     // The terms' own currency is untouched.

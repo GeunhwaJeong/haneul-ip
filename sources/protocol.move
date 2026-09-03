@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /// Protocol-level levers shared by every money path in the package:
-/// a circuit breaker and a fee switch.
+/// a circuit breaker, a fee switch, and the vault the fee accrues in.
 ///
 /// Both exist for the same reason: a Move package upgrade cannot
 /// retrofit them. Old entry points stay callable after an upgrade, so
@@ -23,7 +23,9 @@
 /// themselves are not.
 module haneul_ip::protocol;
 
-use haneul::coin::Coin;
+use haneul::bag::{Self, Bag};
+use haneul::balance::Balance;
+use haneul::coin::{Self, Coin};
 use haneul::event;
 use std::type_name::{Self, TypeName};
 
@@ -41,6 +43,8 @@ const ENoPendingTransfer: vector<u8> = b"There is no pending cap transfer.";
 const ENotPendingAdmin: vector<u8> = b"You are not the proposed cap recipient.";
 #[error(code = 6)]
 const ETransferNotAccepted: vector<u8> = b"The proposed recipient has not accepted the transfer.";
+#[error(code = 7)]
+const ENoFeesAccrued: vector<u8> = b"No protocol fees have accrued in this coin type.";
 
 const BPS_DENOM: u64 = 10_000;
 /// Bumped together with any package upgrade that must invalidate the
@@ -53,8 +57,12 @@ public struct ProtocolConfig has key {
     /// every state-writing entry point; bumped by `migrate` after a
     /// package upgrade.
     version: u64,
-    /// Receives the protocol's cut of every payment.
-    treasury: address,
+    /// The protocol's cut of every payment, per coin type
+    /// (TypeName -> Balance<T>). Accrues in place instead of being
+    /// sent out per payment, so a payment never creates a coin object
+    /// for the treasury and the protocol's income is readable as
+    /// state; the cap holder withdraws with `withdraw_fees`.
+    fees: Bag,
     /// Protocol fee in basis points of each payment. Starts at 0.
     fee_bps: u64,
     /// Circuit breaker over every money path: inflows (royalty
@@ -88,17 +96,17 @@ public struct CapTransferProposed has copy, drop { to: address }
 public struct CapTransferAccepted has copy, drop { by: address }
 public struct CapTransferExecuted has copy, drop { to: address }
 public struct CapTransferCancelled has copy, drop {}
-public struct TreasurySet has copy, drop { treasury: address }
 public struct PauseSet has copy, drop { paused: bool }
-/// Carries the coin type so the treasury's event stream reconciles
-/// per currency without re-reading each transaction.
+/// Carries the coin type so the fee stream reconciles per currency
+/// without re-reading each transaction.
 public struct FeeCollected has copy, drop { amount: u64, coin_type: TypeName }
+public struct FeesWithdrawn has copy, drop { amount: u64, coin_type: TypeName }
 
 fun init(ctx: &mut TxContext) {
     transfer::share_object(ProtocolConfig {
         id: object::new(ctx),
         version: VERSION,
-        treasury: ctx.sender(),
+        fees: bag::new(ctx),
         fee_bps: 0,
         paused: false,
         pending_admin: option::none(),
@@ -122,30 +130,44 @@ public fun assert_current_version(cfg: &ProtocolConfig) {
     assert!(cfg.version == VERSION, EWrongVersion);
 }
 
-/// Takes the protocol's cut out of `payment` and sends it to the
-/// treasury. A no-op while the fee is 0. Returns the amount taken.
-public(package) fun collect<T>(
-    cfg: &ProtocolConfig,
-    payment: &mut Coin<T>,
-    ctx: &mut TxContext,
-): u64 {
+/// Takes the protocol's cut out of `payment` into the fee vault. A
+/// no-op while the fee is 0. Returns the amount taken.
+public(package) fun collect<T>(cfg: &mut ProtocolConfig, payment: &mut Coin<T>): u64 {
     let fee =
         ((payment.value() as u128) * (cfg.fee_bps as u128) / (BPS_DENOM as u128)) as u64;
     if (fee == 0) return 0;
-    transfer::public_transfer(payment.split(fee, ctx), cfg.treasury);
-    event::emit(FeeCollected { amount: fee, coin_type: type_name::with_defining_ids<T>() });
+    let key = type_name::with_defining_ids<T>();
+    if (!cfg.fees.contains(key)) {
+        cfg.fees.add(key, haneul::balance::zero<T>());
+    };
+    cfg.fees.borrow_mut<TypeName, Balance<T>>(key).join(payment.balance_mut().split(fee));
+    event::emit(FeeCollected { amount: fee, coin_type: key });
     fee
+}
+
+/// Withdraws everything the vault holds in `T`. Not gated on the
+/// pause switch: the vault is the protocol's own money, and the cap
+/// holder is the one who pauses.
+public fun withdraw_fees<T>(cfg: &mut ProtocolConfig, _cap: &ProtocolCap, ctx: &mut TxContext): Coin<T> {
+    let key = type_name::with_defining_ids<T>();
+    assert!(cfg.fees.contains(key), ENoFeesAccrued);
+    let vault = cfg.fees.borrow_mut<TypeName, Balance<T>>(key);
+    let amount = vault.value();
+    assert!(amount > 0, ENoFeesAccrued);
+    event::emit(FeesWithdrawn { amount, coin_type: key });
+    coin::from_balance(vault.split(amount), ctx)
+}
+
+public fun fees_accrued<T>(cfg: &ProtocolConfig): u64 {
+    let key = type_name::with_defining_ids<T>();
+    if (!cfg.fees.contains(key)) return 0;
+    cfg.fees.borrow<TypeName, Balance<T>>(key).value()
 }
 
 public fun set_fee_bps(cfg: &mut ProtocolConfig, _cap: &ProtocolCap, fee_bps: u64) {
     assert!(fee_bps <= BPS_DENOM, EFeeAboveMax);
     cfg.fee_bps = fee_bps;
     event::emit(FeeSet { fee_bps });
-}
-
-public fun set_treasury(cfg: &mut ProtocolConfig, _cap: &ProtocolCap, treasury: address) {
-    cfg.treasury = treasury;
-    event::emit(TreasurySet { treasury });
 }
 
 /// The emergency lever. Intentionally has no precondition beyond the
@@ -214,8 +236,6 @@ public fun pending_admin(cfg: &ProtocolConfig): Option<address> { cfg.pending_ad
 public fun pending_accepted(cfg: &ProtocolConfig): bool { cfg.pending_accepted }
 
 public fun fee_bps(cfg: &ProtocolConfig): u64 { cfg.fee_bps }
-
-public fun treasury(cfg: &ProtocolConfig): address { cfg.treasury }
 
 public fun is_paused(cfg: &ProtocolConfig): bool { cfg.paused }
 

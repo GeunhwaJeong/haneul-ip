@@ -127,7 +127,7 @@ public fun add_parent_direct<T>(
     builder: &mut DerivativeBuilder,
     parent: &mut IPAsset,
     reg: &TermsRegistry,
-    cfg: &ProtocolConfig,
+    cfg: &mut ProtocolConfig,
     terms_id: u64,
     payment: &mut Coin<T>,
     max_fee: u64,
@@ -150,7 +150,7 @@ public fun add_parent_direct<T>(
         assert!(max_fee == 0 || fee <= max_fee, EFeeAboveMax);
         assert!(payment.value() >= fee, EInsufficientPayment);
         let mut fee_coin = payment.split(fee, ctx);
-        protocol::collect(cfg, &mut fee_coin, ctx);
+        protocol::collect(cfg, &mut fee_coin);
         parent.deposit(fee_coin);
     };
 

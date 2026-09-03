@@ -154,12 +154,12 @@ public fun mint_license_to(
     clock: &Clock,
 ): ID {
     s.next_tx(buyer);
-    let cfg = s.take_shared<ProtocolConfig>();
+    let mut cfg = s.take_shared<ProtocolConfig>();
     let reg = s.take_shared<TermsRegistry>();
     let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
     let mut payment = mint_haneul(s, pay_amount);
     let license = license::mint<HANEUL>(
-        &cfg,
+        &mut cfg,
         &mut asset,
         &reg,
         terms_id,
@@ -192,12 +192,12 @@ public fun make_child(
     clock: &Clock,
 ): (ID, ID) {
     s.next_tx(creator);
-    let cfg = s.take_shared<ProtocolConfig>();
+    let mut cfg = s.take_shared<ProtocolConfig>();
     let reg = s.take_shared<TermsRegistry>();
     let mut parent = s.take_shared_by_id<IPAsset>(parent_ip);
     let mut payment = mint_haneul(s, pay_amount);
     let license = license::mint<HANEUL>(
-        &cfg,
+        &mut cfg,
         &mut parent,
         &reg,
         terms_id,
@@ -238,9 +238,9 @@ public fun approve(
 /// Pays `amount` HANEUL of royalties to `ip_id`.
 public fun pay_royalty(s: &mut Scenario, payer: address, ip_id: ID, amount: u64, clock: &Clock) {
     s.next_tx(payer);
-    let cfg = s.take_shared<ProtocolConfig>();
+    let mut cfg = s.take_shared<ProtocolConfig>();
     let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
-    royalty::pay<HANEUL>(&cfg, &mut asset, mint_haneul(s, amount), clock, s.ctx());
+    royalty::pay<HANEUL>(&mut cfg, &mut asset, mint_haneul(s, amount), clock, s.ctx());
     ts::return_shared(cfg);
     ts::return_shared(asset);
 }

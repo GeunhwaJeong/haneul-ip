@@ -16,6 +16,7 @@ use haneul_ip::protocol::{Self, ProtocolCap, ProtocolConfig};
 use haneul_ip::royalty;
 use haneul_ip::terms::TermsRegistry;
 use haneul_ip::test_helpers::{
+    USDX,
     new_clock,
     setup,
     stale_config,
@@ -23,6 +24,7 @@ use haneul_ip::test_helpers::{
     root_with_terms,
     pay_royalty,
     mint_haneul,
+    mint_license_to,
 };
 
 const ADMIN: address = @0xAD;
@@ -48,14 +50,14 @@ fun set_paused(s: &mut Scenario, paused: bool) {
 }
 
 #[test]
-fun init_defaults_are_fee_zero_unpaused_admin_treasury() {
+fun init_defaults_are_fee_zero_unpaused_empty_vault() {
     let mut s = ts::begin(ADMIN);
     setup(&mut s);
     s.next_tx(ADMIN);
     let cfg = s.take_shared<ProtocolConfig>();
     assert!(protocol::fee_bps(&cfg) == 0);
     assert!(!protocol::is_paused(&cfg));
-    assert!(protocol::treasury(&cfg) == ADMIN);
+    assert!(protocol::fees_accrued<HANEUL>(&cfg) == 0);
     ts::return_shared(cfg);
     s.end();
 }
@@ -79,10 +81,10 @@ fun zero_fee_passes_full_amount_to_pool() {
     s.end();
 }
 
-/// The fee switch: 5% set, a 1000 payment sends 50 to the treasury
-/// and 950 into the pool.
+/// The fee switch: 5% set, a 1000 payment accrues 50 in the vault
+/// and 950 in the pool; the cap withdraws the 50.
 #[test]
-fun fee_switch_takes_cut_to_treasury() {
+fun fee_switch_takes_cut_to_vault() {
     let mut s = ts::begin(ADMIN);
     setup(&mut s);
     let clock = new_clock(&mut s);
@@ -100,9 +102,15 @@ fun fee_switch_takes_cut_to_treasury() {
     assert!(coin_type == std::type_name::with_defining_ids<HANEUL>());
 
     s.next_tx(ADMIN);
-    let fee_coin = s.take_from_sender<Coin<HANEUL>>();
-    assert!(fee_coin.value() == 50);
-    s.return_to_sender(fee_coin);
+    let mut cfg = s.take_shared<ProtocolConfig>();
+    let cap = s.take_from_sender<ProtocolCap>();
+    assert!(protocol::fees_accrued<HANEUL>(&cfg) == 50);
+    let withdrawn = protocol::withdraw_fees<HANEUL>(&mut cfg, &cap, s.ctx());
+    assert!(withdrawn.value() == 50);
+    assert!(protocol::fees_accrued<HANEUL>(&cfg) == 0);
+    withdrawn.burn_for_testing();
+    s.return_to_sender(cap);
+    ts::return_shared(cfg);
     let asset = s.take_shared_by_id<IPAsset>(ip_id);
     assert!(ip::claimable_by_owner<HANEUL>(&asset) == 950);
     ts::return_shared(asset);
@@ -110,30 +118,42 @@ fun fee_switch_takes_cut_to_treasury() {
     s.end();
 }
 
+/// Fees accrue per coin type and keep accruing across payments; an
+/// empty vault refuses a withdrawal instead of minting a zero coin.
 #[test]
-fun treasury_change_redirects_fee() {
+fun vault_accrues_per_currency_across_payments() {
     let mut s = ts::begin(ADMIN);
     setup(&mut s);
     let clock = new_clock(&mut s);
-    let terms_id = std_terms(&mut s, 1_000, 0);
+    let terms_id = std_terms(&mut s, 1_000, 100);
     let (ip_id, _) = root_with_terms(&mut s, ALICE, 1, terms_id, &clock);
     set_fee(&mut s, 500);
 
+    pay_royalty(&mut s, CAROL, ip_id, 1_000, &clock);
+    pay_royalty(&mut s, CAROL, ip_id, 3_000, &clock);
+    // A minting fee is revenue like any other: 5% of the 100 fee.
+    mint_license_to(&mut s, CAROL, ip_id, terms_id, 100, &clock);
+
+    s.next_tx(ADMIN);
+    let cfg = s.take_shared<ProtocolConfig>();
+    assert!(protocol::fees_accrued<HANEUL>(&cfg) == 50 + 150 + 5);
+    assert!(protocol::fees_accrued<USDX>(&cfg) == 0);
+    ts::return_shared(cfg);
+    clock.destroy_for_testing();
+    s.end();
+}
+
+#[test]
+#[expected_failure(abort_code = haneul_ip::protocol::ENoFeesAccrued)]
+fun withdrawing_from_empty_vault_aborts() {
+    let mut s = ts::begin(ADMIN);
+    setup(&mut s);
     s.next_tx(ADMIN);
     let mut cfg = s.take_shared<ProtocolConfig>();
     let cap = s.take_from_sender<ProtocolCap>();
-    protocol::set_treasury(&mut cfg, &cap, CAROL);
-    s.return_to_sender(cap);
-    ts::return_shared(cfg);
-
-    pay_royalty(&mut s, ALICE, ip_id, 1_000, &clock);
-
-    s.next_tx(CAROL);
-    let fee_coin = s.take_from_sender<Coin<HANEUL>>();
-    assert!(fee_coin.value() == 50);
-    s.return_to_sender(fee_coin);
-    clock.destroy_for_testing();
-    s.end();
+    let coin = protocol::withdraw_fees<HANEUL>(&mut cfg, &cap, s.ctx());
+    coin.burn_for_testing();
+    abort 99
 }
 
 #[test]
@@ -169,12 +189,12 @@ fun pause_blocks_license_mint() {
     set_paused(&mut s, true);
 
     s.next_tx(CAROL);
-    let cfg = s.take_shared<ProtocolConfig>();
+    let mut cfg = s.take_shared<ProtocolConfig>();
     let reg = s.take_shared<TermsRegistry>();
     let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
     let mut payment = mint_haneul(&mut s, 100);
     let lic =
-        license::mint<HANEUL>(&cfg, &mut asset, &reg, terms_id, &mut payment, 0, &clock, s.ctx());
+        license::mint<HANEUL>(&mut cfg, &mut asset, &reg, terms_id, &mut payment, 0, &clock, s.ctx());
     license::keep(lic, s.ctx());
     abort 99
 }
