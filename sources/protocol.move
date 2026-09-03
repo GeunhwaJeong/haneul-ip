@@ -72,10 +72,15 @@ public struct ProtocolConfig has key {
     pending_accepted: bool,
 }
 
-/// Admin capability. `key`-only on purpose: it can never leave the
-/// module's own transfer functions, so its custody rules are frozen
-/// at publish time.
-public struct ProtocolCap has key { id: UID }
+/// Admin capability. Has `store` so that an object can hold it: a
+/// timelock, a multisig-style vault, or whatever custody contract the
+/// protocol adopts later. Abilities cannot be added by an upgrade, so
+/// this is the open door; `key`-only would have closed it for good.
+/// The cost is that generic transfer is possible; the three-step
+/// handoff below stays the recommended way to move it between
+/// parties, because it cannot send the cap to an address nobody
+/// controls.
+public struct ProtocolCap has key, store { id: UID }
 
 public struct FeeSet has copy, drop { fee_bps: u64 }
 public struct ConfigMigrated has copy, drop { version: u64 }
@@ -99,7 +104,7 @@ fun init(ctx: &mut TxContext) {
         pending_admin: option::none(),
         pending_accepted: false,
     });
-    transfer::transfer(ProtocolCap { id: object::new(ctx) }, ctx.sender());
+    transfer::public_transfer(ProtocolCap { id: object::new(ctx) }, ctx.sender());
 }
 
 /// Every money-moving function in the package calls this first.
@@ -182,7 +187,7 @@ public fun execute_cap_transfer(cfg: &mut ProtocolConfig, cap: ProtocolCap) {
     assert!(cfg.pending_accepted, ETransferNotAccepted);
     let to = cfg.pending_admin.extract();
     cfg.pending_accepted = false;
-    transfer::transfer(cap, to);
+    transfer::public_transfer(cap, to);
     event::emit(CapTransferExecuted { to });
 }
 
