@@ -1,4 +1,4 @@
-// Copyright (c) Haneul Labs
+// Copyright (c) 2026 Geunhwa Jeong
 // SPDX-License-Identifier: Apache-2.0
 
 /// Protocol-level levers shared by every money path in the package:

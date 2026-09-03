@@ -1,4 +1,4 @@
-// Copyright (c) Haneul Labs
+// Copyright (c) 2026 Geunhwa Jeong
 // SPDX-License-Identifier: Apache-2.0
 
 /// Tests for `haneul_ip::dispute`: the raise/judge/resolve lifecycle,
