@@ -160,12 +160,18 @@ public fun set_arbiter(reg: &mut DisputeRegistry, _cap: &ProtocolCap, arbiter: a
     event::emit(ArbiterSet { arbiter });
 }
 
+/// Idempotent: allowing a tag that is already allowed is a no-op, so
+/// an operations script can be re-run safely. Emits only on change.
 public fun allow_tag(reg: &mut DisputeRegistry, _cap: &ProtocolCap, tag: String) {
+    if (reg.tags.contains(&tag)) return;
     reg.tags.insert(tag);
     event::emit(TagAllowed { tag, allowed: true });
 }
 
+/// Idempotent counterpart of `allow_tag`. Disputes already raised
+/// under the tag are unaffected: the whitelist gates `raise` only.
 public fun disallow_tag(reg: &mut DisputeRegistry, _cap: &ProtocolCap, tag: String) {
+    if (!reg.tags.contains(&tag)) return;
     reg.tags.remove(&tag);
     event::emit(TagAllowed { tag, allowed: false });
 }

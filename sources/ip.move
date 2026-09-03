@@ -64,6 +64,8 @@ const ECurrencyNotAccepted: vector<u8> = b"This IP asset does not accept revenue
 const ETooManyCurrencies: vector<u8> = b"The accepted-currency limit has been reached.";
 #[error(code = 13)]
 const ETooManyApprovals: vector<u8> = b"The approved-licensee limit has been reached.";
+#[error(code = 14)]
+const ECurrencyBoundToTerms: vector<u8> = b"Attached terms charge their minting fee in this currency; it cannot be stopped.";
 
 const BPS_DENOM: u64 = 10_000;
 const CONTENT_HASH_LENGTH: u64 = 32;
@@ -347,10 +349,23 @@ public fun accept_currency<T>(self: &mut IPAsset, cap: &IPOwnerCap) {
 }
 
 /// Stops NEW deposits in `T`. Existing pools stay claimable forever,
-/// so stopping a currency can never trap funds.
-public fun stop_accepting_currency<T>(self: &mut IPAsset, cap: &IPOwnerCap) {
+/// so stopping a currency can never trap funds. A currency that any
+/// attached terms charge their minting fee in cannot be stopped: the
+/// fee is deposited through the same gate, so stopping it would make
+/// every mint under those terms abort while the terms stay on offer.
+public fun stop_accepting_currency<T>(
+    self: &mut IPAsset,
+    cap: &IPOwnerCap,
+    reg: &TermsRegistry,
+) {
     self.assert_owner(cap);
     let currency = type_name::with_defining_ids<T>();
+    let attached = self.attached_terms.keys();
+    let mut i = 0;
+    while (i < attached.length()) {
+        assert!(terms::currency(terms::get(reg, attached[i])) != currency, ECurrencyBoundToTerms);
+        i = i + 1;
+    };
     if (self.accepted_currencies.contains(&currency)) {
         self.accepted_currencies.remove(&currency);
         event::emit(CurrencyStopped { ip: object::id(self), coin_type: currency });

@@ -175,6 +175,27 @@ fun new_arbiter_can_judge() {
     s.end();
 }
 
+/// Allowing twice and disallowing twice are no-ops, so an operations
+/// script can be re-run; disallowing closes `raise` for the tag.
+#[test]
+fun tag_admin_is_idempotent() {
+    let mut s = ts::begin(ADMIN);
+    setup(&mut s);
+    setup_tag(&mut s);
+    setup_tag(&mut s);
+    s.next_tx(ADMIN);
+    let mut reg = s.take_shared<DisputeRegistry>();
+    let cap = s.take_from_sender<ProtocolCap>();
+    assert!(dispute::is_tag_allowed(&reg, &str(b"PLAGIARISM")));
+    dispute::disallow_tag(&mut reg, &cap, str(b"PLAGIARISM"));
+    dispute::disallow_tag(&mut reg, &cap, str(b"PLAGIARISM"));
+    dispute::disallow_tag(&mut reg, &cap, str(b"NEVER_ALLOWED"));
+    assert!(!dispute::is_tag_allowed(&reg, &str(b"PLAGIARISM")));
+    s.return_to_sender(cap);
+    ts::return_shared(reg);
+    s.end();
+}
+
 #[test]
 #[expected_failure(abort_code = haneul_ip::dispute::ETagNotAllowed)]
 fun unallowed_tag_aborts() {

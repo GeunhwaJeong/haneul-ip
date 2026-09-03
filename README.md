@@ -47,11 +47,13 @@ Registration is self-attested: the chain records who claimed what and when, and 
 Requires the `haneul` CLI built from the [Haneul repository](https://github.com/GeunhwaJeong/haneul).
 
 ```bash
-haneul move build
-haneul move test
+haneul move build --build-env mainnet
+haneul move test --build-env mainnet
 ```
 
-The test suite currently covers 95 cases, 60 of which assert failure paths (wrong capabilities, exceeded limits, frozen assets, replayed evidence, and similar).
+The `--build-env` flag selects the framework dependency set; the package itself has no environment-specific code.
+
+The test suite currently covers 124 cases, 79 of which assert failure paths (wrong capabilities, exceeded limits, frozen assets, replayed evidence, and similar).
 
 ## Security
 

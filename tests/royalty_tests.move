@@ -11,6 +11,7 @@ use haneul::test_scenario::{Self as ts, Scenario};
 use haneul_ip::ip::{Self, IPAsset, IPOwnerCap};
 use haneul_ip::protocol::ProtocolConfig;
 use haneul_ip::royalty;
+use haneul_ip::terms::TermsRegistry;
 use haneul_ip::test_helpers::{
     USDX,
     new_clock,
@@ -285,6 +286,8 @@ fun payment_in_unaccepted_currency_aborts() {
 
 /// Stopping a currency blocks new deposits but never claims: funds
 /// already in the pool stay withdrawable.
+/// A currency the owner opted into (not bound to any terms) can be
+/// stopped, and what was already received stays claimable.
 #[test]
 fun stopped_currency_stays_claimable() {
     let mut s = ts::begin(ADMIN);
@@ -292,19 +295,49 @@ fun stopped_currency_stays_claimable() {
     let clock = new_clock(&mut s);
     let terms_id = std_terms(&mut s, 1_000, 0);
     let (ip_id, cap_id) = root_with_terms(&mut s, ALICE, 1, terms_id, &clock);
-    pay_royalty(&mut s, CAROL, ip_id, 1_000, &clock);
 
     s.next_tx(ALICE);
+    let cfg = s.take_shared<ProtocolConfig>();
+    let reg = s.take_shared<TermsRegistry>();
     let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
     let cap = s.take_from_sender_by_id<IPOwnerCap>(cap_id);
-    ip::stop_accepting_currency<HANEUL>(&mut asset, &cap);
-    assert!(!ip::is_currency_accepted<HANEUL>(&asset));
+    ip::accept_currency<USDX>(&mut asset, &cap);
+    let usdx = haneul::coin::mint_for_testing<USDX>(1_000, s.ctx());
+    royalty::pay<USDX>(&cfg, &mut asset, usdx, &clock, s.ctx());
+    ip::stop_accepting_currency<USDX>(&mut asset, &cap, &reg);
+    assert!(!ip::is_currency_accepted<USDX>(&asset));
+    // The terms' own currency is untouched.
+    assert!(ip::is_currency_accepted<HANEUL>(&asset));
+    let claimed = royalty::claim_owner<USDX>(&cfg, &mut asset, &cap, s.ctx());
+    assert!(claimed.value() == 1_000);
+    claimed.burn_for_testing();
+    ts::return_shared(cfg);
+    ts::return_shared(reg);
     ts::return_shared(asset);
     s.return_to_sender(cap);
 
-    assert!(claim_owner(&mut s, ALICE, ip_id, cap_id) == 1_000);
     clock.destroy_for_testing();
     s.end();
+}
+
+/// The minting fee of attached terms is deposited through the same
+/// currency gate, so the terms' currency cannot be stopped while the
+/// terms are attached; otherwise every mint under them would abort.
+#[test]
+#[expected_failure(abort_code = haneul_ip::ip::ECurrencyBoundToTerms)]
+fun stopping_a_terms_currency_aborts() {
+    let mut s = ts::begin(ADMIN);
+    setup(&mut s);
+    let clock = new_clock(&mut s);
+    let terms_id = std_terms(&mut s, 1_000, 0);
+    let (ip_id, cap_id) = root_with_terms(&mut s, ALICE, 1, terms_id, &clock);
+
+    s.next_tx(ALICE);
+    let reg = s.take_shared<TermsRegistry>();
+    let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
+    let cap = s.take_from_sender_by_id<IPOwnerCap>(cap_id);
+    ip::stop_accepting_currency<HANEUL>(&mut asset, &cap, &reg);
+    abort 99
 }
 
 #[test]
