@@ -37,7 +37,7 @@ Registration is self-attested: the chain records who claimed what and when, and 
 
 - **Append-only graph.** A derivative's parents are fixed the moment it is registered. That single property is what allows each asset to carry its full ancestor royalty table as plain object fields, merged once, valid forever.
 - **Absolute royalty shares.** An ancestor's share applies to every payment made to a descendant, at the percentage agreed when the link was created. Shares reached through multiple paths accumulate, and the combined burden can never exceed 100%.
-- **Slippage guards.** Minting and registration take caller-side limits (`max_fee`, `max_total_stack_bps`), because a licensor can change fees and shares between a buyer signing and the transaction executing.
+- **Slippage guards.** Minting and registration take optional caller-side limits (`max_fee`, `max_total_stack_bps`), because a licensor can change fees and shares between a buyer signing and the transaction executing. Passing no limit waives the guard; passing zero insists on a free mint or a royalty-free registration, so a caller can never be charged more than they typed.
 - **Mint-time snapshots.** A sold license keeps the terms it was sold under; later changes by the licensor apply only to future sales.
 - **Opt-in revenue currencies.** An asset only accepts deposits in coin types it opted into (its terms' currencies, plus any the owner adds), so third parties cannot bloat it with junk-coin pools. Stopping a currency never blocks claims on funds already received.
 - **Fees accrue where they are earned.** The protocol's cut of a payment stays inside the paid asset's own pool as a separate bucket, so a payment writes only the asset it pays and never the shared protocol config. A permissionless sweep moves accrued fees into the per-currency vault on the config object, from which the capability holder withdraws. Payments to different assets therefore never contend on one object, and the protocol's income is readable as state either way.
@@ -54,7 +54,7 @@ haneul move test --build-env mainnet
 
 The `--build-env` flag selects the framework dependency set; the package itself has no environment-specific code.
 
-The test suite currently covers 131 cases, 82 of which assert failure paths (wrong capabilities, exceeded limits, frozen assets, replayed evidence, and similar).
+The test suite currently covers 136 cases, 85 of which assert failure paths (wrong capabilities, exceeded limits, frozen assets, replayed evidence, and similar).
 
 ## Security
 

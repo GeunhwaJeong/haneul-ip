@@ -164,7 +164,7 @@ public fun mint_license_to(
         &reg,
         terms_id,
         &mut payment,
-        0,
+        option::none(),
         clock,
         s.ctx(),
     );
@@ -202,13 +202,13 @@ public fun make_child(
         &reg,
         terms_id,
         &mut payment,
-        0,
+        option::none(),
         clock,
         s.ctx(),
     );
     let mut builder = derivative::begin(str(b"child"), hash(seed), str(b""));
     derivative::add_parent(&mut builder, &mut parent, &reg, license, clock);
-    let cap = derivative::finish(builder, &cfg, 0, clock, s.ctx());
+    let cap = derivative::finish(builder, &cfg, option::none(), clock, s.ctx());
     let child_ip = ip::cap_ip(&cap);
     let cap_id = object::id(&cap);
     transfer::public_transfer(cap, creator);

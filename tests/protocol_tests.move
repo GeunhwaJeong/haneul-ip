@@ -355,7 +355,7 @@ fun pause_blocks_license_mint() {
     let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
     let mut payment = mint_haneul(&mut s, 100);
     let lic =
-        license::mint<HANEUL>(&cfg, &mut asset, &reg, terms_id, &mut payment, 0, &clock, s.ctx());
+        license::mint<HANEUL>(&cfg, &mut asset, &reg, terms_id, &mut payment, option::none(), &clock, s.ctx());
     license::keep(lic, s.ctx());
     abort 99
 }

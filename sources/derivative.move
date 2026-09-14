@@ -122,7 +122,9 @@ public fun add_parent(
 }
 
 /// Mint-and-link in one step: pays the minting fee directly and
-/// links, with no separate license object changing hands.
+/// links, with no separate license object changing hands. `max_fee`
+/// has the same meaning as in `license::mint`: `none` waives the
+/// guard, `some(0)` insists on a free mint.
 public fun add_parent_direct<T>(
     builder: &mut DerivativeBuilder,
     parent: &mut IPAsset,
@@ -130,7 +132,7 @@ public fun add_parent_direct<T>(
     cfg: &ProtocolConfig,
     terms_id: u64,
     payment: &mut Coin<T>,
-    max_fee: u64,
+    max_fee: Option<u64>,
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
@@ -147,7 +149,7 @@ public fun add_parent_direct<T>(
     let fee = parent.effective_minting_fee(terms_id, &t);
     if (fee > 0) {
         assert!(type_name::with_defining_ids<T>() == terms::currency(&t), EWrongCurrency);
-        assert!(max_fee == 0 || fee <= max_fee, EFeeAboveMax);
+        assert!(max_fee.is_none() || fee <= *max_fee.borrow(), EFeeAboveMax);
         assert!(payment.value() >= fee, EInsufficientPayment);
         parent.deposit(cfg, payment.split(fee, ctx));
     };
@@ -157,8 +159,9 @@ public fun add_parent_direct<T>(
 }
 
 /// Seals the builder into a shared `IPAsset` and returns the owner
-/// cap. `max_total_stack_bps` (0 = no limit) is the registrant's
-/// slippage guard on the combined royalty burden.
+/// cap. `max_total_stack_bps` is the registrant's slippage guard on
+/// the combined royalty burden: `none` waives it, `some(0)` insists
+/// that no ancestor takes a share at all.
 ///
 /// Gated on the package version: the merged graph is immutable once
 /// written, and since the hot potato forces every begin/add_parent
@@ -167,7 +170,7 @@ public fun add_parent_direct<T>(
 public fun finish(
     builder: DerivativeBuilder,
     cfg: &ProtocolConfig,
-    max_total_stack_bps: u64,
+    max_total_stack_bps: Option<u64>,
     clock: &Clock,
     ctx: &mut TxContext,
 ): IPOwnerCap {
@@ -185,7 +188,10 @@ public fun finish(
     } = builder;
     assert!(!parents.is_empty(), ENoParents);
     assert!(stack_bps <= BPS_DENOM, EStackTooHigh);
-    assert!(max_total_stack_bps == 0 || stack_bps <= max_total_stack_bps, EStackAboveMax);
+    assert!(
+        max_total_stack_bps.is_none() || stack_bps <= *max_total_stack_bps.borrow(),
+        EStackAboveMax,
+    );
     ip::new_derivative(
         name,
         content_hash,
