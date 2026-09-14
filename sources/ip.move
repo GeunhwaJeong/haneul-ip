@@ -66,6 +66,8 @@ const ETooManyCurrencies: vector<u8> = b"The accepted-currency limit has been re
 const ETooManyApprovals: vector<u8> = b"The approved-licensee limit has been reached.";
 #[error(code = 14)]
 const ECurrencyBoundToTerms: vector<u8> = b"Attached terms charge their minting fee in this currency; it cannot be stopped.";
+#[error(code = 15)]
+const ENoProtocolFees: vector<u8> = b"No protocol fees have accrued on this IP asset in this coin type.";
 
 const BPS_DENOM: u64 = 10_000;
 const CONTENT_HASH_LENGTH: u64 = 32;
@@ -151,9 +153,14 @@ public struct Pool<phantom T> has store {
     balance: Balance<T>,
     /// ancestor -> claimable amount, accrued at payment time.
     owed: VecMap<ID, u64>,
-    /// Invariant: sum of `owed` values; the owner's claimable share
-    /// is `balance - total_owed`.
+    /// Invariant: sum of `owed` values.
     total_owed: u64,
+    /// The protocol's cut, accrued here at payment time and moved to
+    /// the protocol vault by a sweep. Kept per pool so that a payment
+    /// never writes the shared `ProtocolConfig`.
+    /// Invariant: the owner's claimable share is
+    /// `balance - total_owed - protocol_owed`.
+    protocol_owed: u64,
 }
 
 public struct IPRegistered has copy, drop {
@@ -187,6 +194,7 @@ public struct Deposited has copy, drop {
     coin_type: TypeName,
     amount: u64,
     to_ancestors: u64,
+    to_protocol: u64,
 }
 
 public struct CurrencyAccepted has copy, drop {
@@ -423,14 +431,16 @@ public fun set_licensing_config(
 
 // === Revenue vault (package-internal; entry points live in `royalty`) ===
 
-/// Splits `payment` across the ancestor map as `owed` accruals; the
-/// remainder is the owner's. The map is <= MAX_ANCESTORS entries, so
-/// the loop is bounded.
-public(package) fun deposit<T>(self: &mut IPAsset, payment: Coin<T>) {
+/// Books the whole of `payment` into this IP's pool: the protocol's
+/// cut (read from `cfg`, never written) as `protocol_owed`, each
+/// ancestor's share of the remainder as `owed`, and what is left for
+/// the owner. Returns the protocol cut. The ancestor map is
+/// <= MAX_ANCESTORS entries, so the loop is bounded.
+public(package) fun deposit<T>(self: &mut IPAsset, cfg: &ProtocolConfig, payment: Coin<T>): u64 {
     let amount = payment.value();
     if (amount == 0) {
         payment.destroy_zero();
-        return
+        return 0
     };
     // The anti-junk gate: only currencies this IP opted into may
     // create or grow pools on it.
@@ -443,12 +453,17 @@ public(package) fun deposit<T>(self: &mut IPAsset, payment: Coin<T>) {
     ensure_pool<T>(self);
     let pool = self.revenue.borrow_mut<TypeName, Pool<T>>(type_name::with_defining_ids<T>());
 
+    // The protocol's cut comes off the top; ancestors share the net.
+    let to_protocol = protocol::collect<T>(cfg, amount);
+    let net = amount - to_protocol;
+    pool.protocol_owed = pool.protocol_owed + to_protocol;
+
     let mut to_ancestors = 0;
     let mut i = 0;
     let n = ancestors.length();
     while (i < n) {
         let (anc, bps) = ancestors.get_entry_by_idx(i);
-        let cut = ((amount as u128) * ((*bps) as u128) / (BPS_DENOM as u128)) as u64;
+        let cut = ((net as u128) * ((*bps) as u128) / (BPS_DENOM as u128)) as u64;
         if (cut > 0) {
             if (pool.owed.contains(anc)) {
                 let owed = pool.owed.get_mut(anc);
@@ -467,16 +482,31 @@ public(package) fun deposit<T>(self: &mut IPAsset, payment: Coin<T>) {
         coin_type: type_name::with_defining_ids<T>(),
         amount,
         to_ancestors,
+        to_protocol,
     });
+    to_protocol
 }
 
 public(package) fun withdraw_owner<T>(self: &mut IPAsset, ctx: &mut TxContext): Coin<T> {
     let key = type_name::with_defining_ids<T>();
     assert!(self.revenue.contains(key), ENothingToClaim);
     let pool = self.revenue.borrow_mut<TypeName, Pool<T>>(key);
-    let available = pool.balance.value() - pool.total_owed;
+    let available = pool.balance.value() - pool.total_owed - pool.protocol_owed;
     assert!(available > 0, ENothingToClaim);
     coin::from_balance(pool.balance.split(available), ctx)
+}
+
+/// Takes the protocol's accrued cut out of this IP's pool, for the
+/// sweep into the protocol vault. Not an entry point; see
+/// `royalty::sweep_protocol_fees`.
+public(package) fun withdraw_protocol<T>(self: &mut IPAsset): Balance<T> {
+    let key = type_name::with_defining_ids<T>();
+    assert!(self.revenue.contains(key), ENoProtocolFees);
+    let pool = self.revenue.borrow_mut<TypeName, Pool<T>>(key);
+    let amount = pool.protocol_owed;
+    assert!(amount > 0, ENoProtocolFees);
+    pool.protocol_owed = 0;
+    pool.balance.split(amount)
 }
 
 public(package) fun withdraw_ancestor<T>(
@@ -500,6 +530,7 @@ fun ensure_pool<T>(self: &mut IPAsset) {
             balance: haneul::balance::zero<T>(),
             owed: vec_map::empty(),
             total_owed: 0,
+            protocol_owed: 0,
         });
     };
 }
@@ -508,7 +539,14 @@ public fun claimable_by_owner<T>(self: &IPAsset): u64 {
     let key = type_name::with_defining_ids<T>();
     if (!self.revenue.contains(key)) return 0;
     let pool = self.revenue.borrow<TypeName, Pool<T>>(key);
-    pool.balance.value() - pool.total_owed
+    pool.balance.value() - pool.total_owed - pool.protocol_owed
+}
+
+/// Protocol fees accrued on this IP in `T` and not yet swept.
+public fun protocol_owed<T>(self: &IPAsset): u64 {
+    let key = type_name::with_defining_ids<T>();
+    if (!self.revenue.contains(key)) return 0;
+    self.revenue.borrow<TypeName, Pool<T>>(key).protocol_owed
 }
 
 public fun claimable_by_ancestor<T>(self: &IPAsset, ancestor: ID): u64 {

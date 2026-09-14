@@ -89,7 +89,7 @@ public struct LicenseTransferred has copy, drop {
 /// means the licensor's ancestors take their royalty cut of minting
 /// fees too: a minting fee is revenue like any other.
 public fun mint<T>(
-    cfg: &mut ProtocolConfig,
+    cfg: &ProtocolConfig,
     licensor_ip: &mut IPAsset,
     reg: &TermsRegistry,
     terms_id: u64,
@@ -105,9 +105,7 @@ public fun mint<T>(
         assert!(type_name::with_defining_ids<T>() == terms::currency(&t), EWrongCurrency);
         assert!(max_fee == 0 || fee <= max_fee, EFeeAboveMax);
         assert!(payment.value() >= fee, EInsufficientPayment);
-        let mut fee_coin = payment.split(fee, ctx);
-        protocol::collect(cfg, &mut fee_coin);
-        licensor_ip.deposit(fee_coin);
+        licensor_ip.deposit(cfg, payment.split(fee, ctx));
     };
 
     issue(licensor_ip, terms_id, &t, fee, ctx)

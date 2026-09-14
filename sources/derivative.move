@@ -127,7 +127,7 @@ public fun add_parent_direct<T>(
     builder: &mut DerivativeBuilder,
     parent: &mut IPAsset,
     reg: &TermsRegistry,
-    cfg: &mut ProtocolConfig,
+    cfg: &ProtocolConfig,
     terms_id: u64,
     payment: &mut Coin<T>,
     max_fee: u64,
@@ -149,9 +149,7 @@ public fun add_parent_direct<T>(
         assert!(type_name::with_defining_ids<T>() == terms::currency(&t), EWrongCurrency);
         assert!(max_fee == 0 || fee <= max_fee, EFeeAboveMax);
         assert!(payment.value() >= fee, EInsufficientPayment);
-        let mut fee_coin = payment.split(fee, ctx);
-        protocol::collect(cfg, &mut fee_coin);
-        parent.deposit(fee_coin);
+        parent.deposit(cfg, payment.split(fee, ctx));
     };
 
     let rev_share_bps = parent.effective_rev_share_bps(terms_id, &t);

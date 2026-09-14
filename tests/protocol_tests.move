@@ -49,6 +49,17 @@ fun set_paused(s: &mut Scenario, paused: bool) {
     ts::return_shared(cfg);
 }
 
+/// `caller` sweeps the HANEUL protocol fees accrued on `ip_id` into
+/// the vault.
+fun sweep(s: &mut Scenario, caller: address, ip_id: ID) {
+    s.next_tx(caller);
+    let mut cfg = s.take_shared<ProtocolConfig>();
+    let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
+    royalty::sweep_protocol_fees<HANEUL>(&mut cfg, &mut asset);
+    ts::return_shared(asset);
+    ts::return_shared(cfg);
+}
+
 #[test]
 fun init_defaults_are_fee_zero_unpaused_empty_vault() {
     let mut s = ts::begin(ADMIN);
@@ -81,10 +92,12 @@ fun zero_fee_passes_full_amount_to_pool() {
     s.end();
 }
 
-/// The fee switch: 5% set, a 1000 payment accrues 50 in the vault
-/// and 950 in the pool; the cap withdraws the 50.
+/// The fee switch: 5% set, a 1000 payment leaves 50 accrued on the
+/// IP as protocol_owed and 950 claimable by the owner. The vault
+/// stays empty until a sweep moves the 50 over; then the cap
+/// withdraws it.
 #[test]
-fun fee_switch_takes_cut_to_vault() {
+fun fee_switch_takes_cut_into_pool_then_vault() {
     let mut s = ts::begin(ADMIN);
     setup(&mut s);
     let clock = new_clock(&mut s);
@@ -102,26 +115,38 @@ fun fee_switch_takes_cut_to_vault() {
     assert!(coin_type == std::type_name::with_defining_ids<HANEUL>());
 
     s.next_tx(ADMIN);
+    let cfg = s.take_shared<ProtocolConfig>();
+    let asset = s.take_shared_by_id<IPAsset>(ip_id);
+    assert!(ip::protocol_owed<HANEUL>(&asset) == 50);
+    assert!(ip::claimable_by_owner<HANEUL>(&asset) == 950);
+    assert!(protocol::fees_accrued<HANEUL>(&cfg) == 0);
+    ts::return_shared(asset);
+    ts::return_shared(cfg);
+
+    sweep(&mut s, ADMIN, ip_id);
+
+    s.next_tx(ADMIN);
     let mut cfg = s.take_shared<ProtocolConfig>();
     let cap = s.take_from_sender<ProtocolCap>();
+    let asset = s.take_shared_by_id<IPAsset>(ip_id);
+    assert!(ip::protocol_owed<HANEUL>(&asset) == 0);
+    assert!(ip::claimable_by_owner<HANEUL>(&asset) == 950);
     assert!(protocol::fees_accrued<HANEUL>(&cfg) == 50);
     let withdrawn = protocol::withdraw_fees<HANEUL>(&mut cfg, &cap, s.ctx());
     assert!(withdrawn.value() == 50);
     assert!(protocol::fees_accrued<HANEUL>(&cfg) == 0);
     withdrawn.burn_for_testing();
     s.return_to_sender(cap);
-    ts::return_shared(cfg);
-    let asset = s.take_shared_by_id<IPAsset>(ip_id);
-    assert!(ip::claimable_by_owner<HANEUL>(&asset) == 950);
     ts::return_shared(asset);
+    ts::return_shared(cfg);
     clock.destroy_for_testing();
     s.end();
 }
 
-/// Fees accrue per coin type and keep accruing across payments; an
-/// empty vault refuses a withdrawal instead of minting a zero coin.
+/// Fees accrue per coin type and keep accruing across payments on
+/// the IP; one sweep carries the whole balance over.
 #[test]
-fun vault_accrues_per_currency_across_payments() {
+fun pool_accrues_per_currency_across_payments() {
     let mut s = ts::begin(ADMIN);
     setup(&mut s);
     let clock = new_clock(&mut s);
@@ -134,6 +159,13 @@ fun vault_accrues_per_currency_across_payments() {
     // A minting fee is revenue like any other: 5% of the 100 fee.
     mint_license_to(&mut s, CAROL, ip_id, terms_id, 100, &clock);
 
+    s.next_tx(ADMIN);
+    let asset = s.take_shared_by_id<IPAsset>(ip_id);
+    assert!(ip::protocol_owed<HANEUL>(&asset) == 50 + 150 + 5);
+    assert!(ip::protocol_owed<USDX>(&asset) == 0);
+    ts::return_shared(asset);
+
+    sweep(&mut s, ADMIN, ip_id);
     s.next_tx(ADMIN);
     let cfg = s.take_shared<ProtocolConfig>();
     assert!(protocol::fees_accrued<HANEUL>(&cfg) == 50 + 150 + 5);
@@ -189,12 +221,12 @@ fun pause_blocks_license_mint() {
     set_paused(&mut s, true);
 
     s.next_tx(CAROL);
-    let mut cfg = s.take_shared<ProtocolConfig>();
+    let cfg = s.take_shared<ProtocolConfig>();
     let reg = s.take_shared<TermsRegistry>();
     let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
     let mut payment = mint_haneul(&mut s, 100);
     let lic =
-        license::mint<HANEUL>(&mut cfg, &mut asset, &reg, terms_id, &mut payment, 0, &clock, s.ctx());
+        license::mint<HANEUL>(&cfg, &mut asset, &reg, terms_id, &mut payment, 0, &clock, s.ctx());
     license::keep(lic, s.ctx());
     abort 99
 }
