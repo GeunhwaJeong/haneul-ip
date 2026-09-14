@@ -280,6 +280,55 @@ fun stack_above_registrant_max_aborts() {
     abort 99
 }
 
+/// `some(0)` is a real bound, not "no limit": a registrant who
+/// insists on a royalty-free registration aborts as soon as any
+/// ancestor takes a share.
+#[test]
+#[expected_failure(abort_code = haneul_ip::derivative::EStackAboveMax)]
+fun zero_stack_bound_rejects_any_ancestor_share() {
+    let mut s = ts::begin(ADMIN);
+    setup(&mut s);
+    let clock = new_clock(&mut s);
+    let terms_id = std_terms(&mut s, 1_000, 0);
+    let (root_ip, _) = root_with_terms(&mut s, ALICE, 1, terms_id, &clock);
+    make_child_direct(&mut s, BOB, root_ip, terms_id, 0, option::none(), option::some(0), 2, &clock);
+    abort 99
+}
+
+/// `some(0)` on the direct path's fee guard insists on a free mint;
+/// terms that charge anything abort before money moves.
+#[test]
+#[expected_failure(abort_code = haneul_ip::derivative::EFeeAboveMax)]
+fun zero_fee_bound_rejects_paid_terms_on_direct_path() {
+    let mut s = ts::begin(ADMIN);
+    setup(&mut s);
+    let clock = new_clock(&mut s);
+    let terms_id = std_terms(&mut s, 1_000, 100);
+    let (root_ip, _) = root_with_terms(&mut s, ALICE, 1, terms_id, &clock);
+    make_child_direct(&mut s, BOB, root_ip, terms_id, 100, option::some(0), option::none(), 2, &clock);
+    abort 99
+}
+
+/// The bounds are inclusive: agreeing to exactly the fee and exactly
+/// the stack goes through.
+#[test]
+fun exact_bounds_pass() {
+    let mut s = ts::begin(ADMIN);
+    setup(&mut s);
+    let clock = new_clock(&mut s);
+    let terms_id = std_terms(&mut s, 1_000, 100);
+    let (root_ip, _) = root_with_terms(&mut s, ALICE, 1, terms_id, &clock);
+    let (child_ip, _) =
+        make_child_direct(&mut s, BOB, root_ip, terms_id, 100, option::some(100), option::some(1_000), 2, &clock);
+
+    s.next_tx(BOB);
+    let child = s.take_shared_by_id<IPAsset>(child_ip);
+    assert!(child.royalty_stack_bps() == 1_000);
+    ts::return_shared(child);
+    clock.destroy_for_testing();
+    s.end();
+}
+
 /// A license can exist for usage terms; using it to LINK requires
 /// derivatives_allowed.
 #[test]

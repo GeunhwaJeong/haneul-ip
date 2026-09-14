@@ -89,6 +89,55 @@ fun mint_fee_above_max_fee_aborts() {
     abort 99
 }
 
+/// `some(0)` is a real bound, not "no limit": a buyer who expects a
+/// free license aborts the moment the terms charge anything. This is
+/// the case the old zero-means-unlimited sentinel got backwards.
+#[test]
+#[expected_failure(abort_code = haneul_ip::license::EFeeAboveMax)]
+fun zero_max_fee_rejects_paid_terms() {
+    let mut s = ts::begin(ADMIN);
+    setup(&mut s);
+    let clock = new_clock(&mut s);
+    let terms_id = std_terms(&mut s, 1_000, 100);
+    let (ip_id, _) = root_with_terms(&mut s, ALICE, 1, terms_id, &clock);
+
+    s.next_tx(BOB);
+    let cfg = s.take_shared<ProtocolConfig>();
+    let reg = s.take_shared<TermsRegistry>();
+    let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
+    let mut payment = mint_haneul(&mut s, 500);
+    let license =
+        license::mint<HANEUL>(&cfg, &mut asset, &reg, terms_id, &mut payment, option::some(0), &clock, s.ctx());
+    license::keep(license, s.ctx());
+    abort 99
+}
+
+/// The bound is inclusive: agreeing to exactly the fee goes through.
+#[test]
+fun exact_max_fee_passes() {
+    let mut s = ts::begin(ADMIN);
+    setup(&mut s);
+    let clock = new_clock(&mut s);
+    let terms_id = std_terms(&mut s, 1_000, 100);
+    let (ip_id, _) = root_with_terms(&mut s, ALICE, 1, terms_id, &clock);
+
+    s.next_tx(BOB);
+    let cfg = s.take_shared<ProtocolConfig>();
+    let reg = s.take_shared<TermsRegistry>();
+    let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
+    let mut payment = mint_haneul(&mut s, 500);
+    let license =
+        license::mint<HANEUL>(&cfg, &mut asset, &reg, terms_id, &mut payment, option::some(100), &clock, s.ctx());
+    assert!(payment.value() == 400);
+    license::keep(license, s.ctx());
+    transfer::public_transfer(payment, BOB);
+    ts::return_shared(cfg);
+    ts::return_shared(reg);
+    ts::return_shared(asset);
+    clock.destroy_for_testing();
+    s.end();
+}
+
 #[test]
 #[expected_failure(abort_code = haneul_ip::license::EInsufficientPayment)]
 fun mint_with_short_payment_aborts() {
