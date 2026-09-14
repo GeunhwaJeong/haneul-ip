@@ -59,8 +59,8 @@ fun make_child_direct(
     parent_ip: ID,
     terms_id: u64,
     pay_amount: u64,
-    max_fee: u64,
-    max_stack: u64,
+    max_fee: Option<u64>,
+    max_stack: Option<u64>,
     seed: u8,
     clock: &Clock,
 ): (ID, ID) {
@@ -128,7 +128,7 @@ fun direct_path_pays_fee_and_links() {
     let terms_id = std_terms(&mut s, 1_000, 100);
     let (root_ip, _) = root_with_terms(&mut s, ALICE, 1, terms_id, &clock);
     let (child_ip, _) =
-        make_child_direct(&mut s, BOB, root_ip, terms_id, 100, 0, 0, 2, &clock);
+        make_child_direct(&mut s, BOB, root_ip, terms_id, 100, option::none(), option::none(), 2, &clock);
 
     s.next_tx(BOB);
     let child = s.take_shared_by_id<IPAsset>(child_ip);
@@ -221,7 +221,7 @@ fun finish_without_parents_aborts() {
     s.next_tx(BOB);
     let cfg = s.take_shared<ProtocolConfig>();
     let builder = derivative::begin(str(b"x"), hash(9), str(b""));
-    let cap = derivative::finish(builder, &cfg, 0, &clock, s.ctx());
+    let cap = derivative::finish(builder, &cfg, option::none(), &clock, s.ctx());
     transfer::public_transfer(cap, BOB);
     abort 99
 }
@@ -251,7 +251,7 @@ fun combined_stack_above_100_percent_aborts() {
     let mut builder = derivative::begin(str(b"x"), hash(9), str(b""));
     derivative::add_parent(&mut builder, &mut parent_a, &reg, first, &clock);
     derivative::add_parent(&mut builder, &mut parent_b, &reg, second, &clock);
-    let cap = derivative::finish(builder, &cfg, 0, &clock, s.ctx());
+    let cap = derivative::finish(builder, &cfg, option::none(), &clock, s.ctx());
     transfer::public_transfer(cap, BOB);
     abort 99
 }
@@ -275,7 +275,7 @@ fun stack_above_registrant_max_aborts() {
     let license = s.take_from_sender<License>();
     let mut builder = derivative::begin(str(b"x"), hash(9), str(b""));
     derivative::add_parent(&mut builder, &mut parent, &reg, license, &clock);
-    let cap = derivative::finish(builder, &cfg, 500, &clock, s.ctx());
+    let cap = derivative::finish(builder, &cfg, option::some(500), &clock, s.ctx());
     transfer::public_transfer(cap, BOB);
     abort 99
 }
@@ -311,7 +311,7 @@ fun approval_terms_block_unapproved_direct_link() {
     let clock = new_clock(&mut s);
     let approval_terms = custom_terms(&mut s, false, 0, true, 1_000, true, true, true, 0);
     let (root_ip, _) = root_with_terms(&mut s, ALICE, 1, approval_terms, &clock);
-    make_child_direct(&mut s, BOB, root_ip, approval_terms, 0, 0, 0, 9, &clock);
+    make_child_direct(&mut s, BOB, root_ip, approval_terms, 0, option::none(), option::none(),9, &clock);
     abort 99
 }
 
@@ -369,7 +369,7 @@ fun grandchild_of_non_reciprocal_terms_aborts() {
     let one_shot = custom_terms(&mut s, true, 0, true, 1_000, true, false, false, 0);
     let (root_ip, _) = root_with_terms(&mut s, ALICE, 1, one_shot, &clock);
     let (child_ip, _) = make_child(&mut s, BOB, root_ip, one_shot, 0, 2, &clock);
-    make_child_direct(&mut s, CAROL, child_ip, one_shot, 0, 0, 0, 3, &clock);
+    make_child_direct(&mut s, CAROL, child_ip, one_shot, 0, option::none(), option::none(),3, &clock);
     abort 99
 }
 
@@ -391,7 +391,7 @@ fun linking_expired_parent_aborts() {
     ts::return_shared(child);
 
     clock.increment_for_testing(1_000_001);
-    make_child_direct(&mut s, CAROL, child_ip, timed_terms, 0, 0, 0, 3, &clock);
+    make_child_direct(&mut s, CAROL, child_ip, timed_terms, 0, option::none(), option::none(),3, &clock);
     abort 99
 }
 
@@ -450,7 +450,7 @@ fun stale_version_blocks_finish() {
     let license = s.take_from_sender<License>();
     let mut builder = derivative::begin(str(b"x"), hash(9), str(b""));
     derivative::add_parent(&mut builder, &mut parent, &reg, license, &clock);
-    let cap = derivative::finish(builder, &cfg, 0, &clock, s.ctx());
+    let cap = derivative::finish(builder, &cfg, option::none(), &clock, s.ctx());
     transfer::public_transfer(cap, BOB);
     abort 99
 }
@@ -487,7 +487,7 @@ fun ninth_parent_aborts() {
             &cfg,
             terms_id,
             &mut payment,
-            0,
+            option::none(),
             &clock,
             s.ctx(),
         );

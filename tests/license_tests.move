@@ -84,7 +84,7 @@ fun mint_fee_above_max_fee_aborts() {
     let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
     let mut payment = mint_haneul(&mut s, 500);
     let license =
-        license::mint<HANEUL>(&cfg, &mut asset, &reg, terms_id, &mut payment, 150, &clock, s.ctx());
+        license::mint<HANEUL>(&cfg, &mut asset, &reg, terms_id, &mut payment, option::some(150), &clock, s.ctx());
     license::keep(license, s.ctx());
     abort 99
 }
@@ -117,7 +117,7 @@ fun mint_in_wrong_currency_aborts() {
     let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
     let mut payment = haneul::coin::mint_for_testing<USDX>(100, s.ctx());
     let license =
-        license::mint<USDX>(&cfg, &mut asset, &reg, terms_id, &mut payment, 0, &clock, s.ctx());
+        license::mint<USDX>(&cfg, &mut asset, &reg, terms_id, &mut payment, option::none(), &clock, s.ctx());
     license::keep(license, s.ctx());
     abort 99
 }

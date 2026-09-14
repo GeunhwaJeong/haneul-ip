@@ -80,10 +80,13 @@ public struct LicenseTransferred has copy, drop {
 /// the effective minting fee out of `payment`, and returns it for the
 /// caller to keep or consume.
 ///
-/// `max_fee` is a slippage guard (0 = no limit): the licensor can
-/// change the fee via `set_licensing_config` between the buyer
-/// signing and the transaction executing, so the buyer states the
-/// most they agreed to pay.
+/// `max_fee` is a slippage guard: the licensor can change the fee via
+/// `set_licensing_config` between the buyer signing and the
+/// transaction executing, so the buyer states the most they agreed to
+/// pay. `none` waives the guard; `some(0)` means "I expect this to be
+/// free" and aborts the moment a fee appears. A bare zero used to
+/// mean "no limit", which is the opposite of what a buyer passing 0
+/// intends, so the two meanings are now distinct types.
 ///
 /// The fee is deposited into the licensor's own revenue pool, which
 /// means the licensor's ancestors take their royalty cut of minting
@@ -94,7 +97,7 @@ public fun mint<T>(
     reg: &TermsRegistry,
     terms_id: u64,
     payment: &mut Coin<T>,
-    max_fee: u64,
+    max_fee: Option<u64>,
     clock: &Clock,
     ctx: &mut TxContext,
 ): License {
@@ -103,7 +106,7 @@ public fun mint<T>(
     let fee = licensor_ip.effective_minting_fee(terms_id, &t);
     if (fee > 0) {
         assert!(type_name::with_defining_ids<T>() == terms::currency(&t), EWrongCurrency);
-        assert!(max_fee == 0 || fee <= max_fee, EFeeAboveMax);
+        assert!(max_fee.is_none() || fee <= *max_fee.borrow(), EFeeAboveMax);
         assert!(payment.value() >= fee, EInsufficientPayment);
         licensor_ip.deposit(cfg, payment.split(fee, ctx));
     };
