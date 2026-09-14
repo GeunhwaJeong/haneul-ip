@@ -40,7 +40,7 @@ Registration is self-attested: the chain records who claimed what and when, and 
 - **Slippage guards.** Minting and registration take caller-side limits (`max_fee`, `max_total_stack_bps`), because a licensor can change fees and shares between a buyer signing and the transaction executing.
 - **Mint-time snapshots.** A sold license keeps the terms it was sold under; later changes by the licensor apply only to future sales.
 - **Opt-in revenue currencies.** An asset only accepts deposits in coin types it opted into (its terms' currencies, plus any the owner adds), so third parties cannot bloat it with junk-coin pools. Stopping a currency never blocks claims on funds already received.
-- **Fees accrue, they are not mailed.** The protocol's cut of a payment joins a per-currency vault inside the config object instead of being transferred out per payment, so a payment never creates a coin object for the treasury and the protocol's income is readable as state. The capability holder withdraws it.
+- **Fees accrue where they are earned.** The protocol's cut of a payment stays inside the paid asset's own pool as a separate bucket, so a payment writes only the asset it pays and never the shared protocol config. A permissionless sweep moves accrued fees into the per-currency vault on the config object, from which the capability holder withdraws. Payments to different assets therefore never contend on one object, and the protocol's income is readable as state either way.
 - **Consent before money.** Approval-gated terms check the licensor's on-chain allowlist at mint time, so nobody can end up holding a paid license they were never allowed to use.
 
 ## Building and testing
@@ -54,7 +54,7 @@ haneul move test --build-env mainnet
 
 The `--build-env` flag selects the framework dependency set; the package itself has no environment-specific code.
 
-The test suite currently covers 125 cases, 80 of which assert failure paths (wrong capabilities, exceeded limits, frozen assets, replayed evidence, and similar).
+The test suite currently covers 131 cases, 82 of which assert failure paths (wrong capabilities, exceeded limits, frozen assets, replayed evidence, and similar).
 
 ## Security
 
