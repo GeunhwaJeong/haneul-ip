@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /// Protocol-level levers shared by every money path in the package:
-/// a circuit breaker, a fee switch, and the vault the fee accrues in.
+/// a circuit breaker, a fee switch, and the vault the fee is swept
+/// into.
 ///
 /// Both exist for the same reason: a Move package upgrade cannot
 /// retrofit them. Old entry points stay callable after an upgrade, so
@@ -14,6 +15,14 @@
 /// lower cap, is deliberately not decided here; that is business
 /// policy, not mechanism.
 ///
+/// The config is READ, never written, on the payment path. A payment
+/// computes its protocol cut from `fee_bps` and leaves that cut
+/// inside the paid IP's own pool (`Pool.protocol_owed`); a separate,
+/// permissionless sweep moves it into the vault here. Taking this
+/// object mutably on every payment would serialize every payment on
+/// the network through one object, so its only writers are the cap
+/// holder's admin calls and the sweep.
+///
 /// The version gate is the third such one-way door. Every
 /// state-writing entry point in the package asserts that the shared
 /// object it touches matches the package VERSION, so after an upgrade
@@ -24,7 +33,7 @@
 module haneul_ip::protocol;
 
 use haneul::bag::{Self, Bag};
-use haneul::balance::Balance;
+use haneul::balance::{Self, Balance};
 use haneul::coin::{Self, Coin};
 use haneul::event;
 use std::type_name::{Self, TypeName};
@@ -57,11 +66,11 @@ public struct ProtocolConfig has key {
     /// every state-writing entry point; bumped by `migrate` after a
     /// package upgrade.
     version: u64,
-    /// The protocol's cut of every payment, per coin type
-    /// (TypeName -> Balance<T>). Accrues in place instead of being
-    /// sent out per payment, so a payment never creates a coin object
-    /// for the treasury and the protocol's income is readable as
-    /// state; the cap holder withdraws with `withdraw_fees`.
+    /// The protocol's cut, per coin type (TypeName -> Balance<T>),
+    /// after it has been swept out of the IP pools it accrued in
+    /// (`royalty::sweep_protocol_fees`). The cap holder withdraws
+    /// with `withdraw_fees`. Income not yet swept is readable per IP
+    /// via `ip::protocol_owed`.
     fees: Bag,
     /// Protocol fee in basis points of each payment. Starts at 0.
     fee_bps: u64,
@@ -97,6 +106,7 @@ public struct CapTransferAccepted has copy, drop { by: address }
 public struct CapTransferExecuted has copy, drop { to: address }
 public struct CapTransferCancelled has copy, drop {}
 public struct PauseSet has copy, drop { paused: bool }
+/// Emitted when a payment accrues a protocol cut inside an IP pool.
 /// Carries the coin type so the fee stream reconciles per currency
 /// without re-reading each transaction.
 public struct FeeCollected has copy, drop { amount: u64, coin_type: TypeName }
@@ -130,19 +140,26 @@ public fun assert_current_version(cfg: &ProtocolConfig) {
     assert!(cfg.version == VERSION, EWrongVersion);
 }
 
-/// Takes the protocol's cut out of `payment` into the fee vault. A
-/// no-op while the fee is 0. Returns the amount taken.
-public(package) fun collect<T>(cfg: &mut ProtocolConfig, payment: &mut Coin<T>): u64 {
-    let fee =
-        ((payment.value() as u128) * (cfg.fee_bps as u128) / (BPS_DENOM as u128)) as u64;
+/// The protocol's cut of a payment of `amount`, floored. Read-only on
+/// the config: the cut itself stays in the paying IP's pool (see
+/// `ip::deposit`) until swept. Emits nothing while the fee is 0.
+public(package) fun collect<T>(cfg: &ProtocolConfig, amount: u64): u64 {
+    let fee = ((amount as u128) * (cfg.fee_bps as u128) / (BPS_DENOM as u128)) as u64;
     if (fee == 0) return 0;
+    event::emit(FeeCollected { amount: fee, coin_type: type_name::with_defining_ids<T>() });
+    fee
+}
+
+/// Joins fees swept out of an IP pool into the vault. The only
+/// non-admin writer of this object; called by
+/// `royalty::sweep_protocol_fees`, which emits the sweep event with
+/// the source IP attached.
+public(package) fun deposit_fees<T>(cfg: &mut ProtocolConfig, fees: Balance<T>) {
     let key = type_name::with_defining_ids<T>();
     if (!cfg.fees.contains(key)) {
-        cfg.fees.add(key, haneul::balance::zero<T>());
+        cfg.fees.add(key, balance::zero<T>());
     };
-    cfg.fees.borrow_mut<TypeName, Balance<T>>(key).join(payment.balance_mut().split(fee));
-    event::emit(FeeCollected { amount: fee, coin_type: key });
-    fee
+    cfg.fees.borrow_mut<TypeName, Balance<T>>(key).join(fees);
 }
 
 /// Withdraws everything the vault holds in `T`. Not gated on the

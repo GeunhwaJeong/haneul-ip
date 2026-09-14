@@ -9,11 +9,20 @@
 /// bounded and merged at registration). Claims are pull-based with
 /// the claimer's own `IPOwnerCap` as identity.
 ///
+/// The protocol's cut of a payment stays in the paid IP's pool as
+/// `protocol_owed`; `sweep_protocol_fees` moves it to the vault in
+/// `ProtocolConfig`. That split is what keeps `ProtocolConfig`
+/// read-only on the payment path, so payments to different IPs never
+/// contend on one shared object.
+///
 /// Freeze rules, in one place:
 ///  - protocol pause freezes payments AND claims (trade-off
 ///    documented in `protocol.move`),
 ///  - a dispute tag on the target freezes its payments and every
-///    claim out of its pools, until the dispute is resolved.
+///    claim out of its pools, until the dispute is resolved,
+///  - neither freezes the sweep: it moves the protocol's own money
+///    between two protocol-controlled places and touches no user
+///    balance.
 ///
 /// Known limit: an ancestor whose own IP is tagged can still claim
 /// from an untagged descendant, because the claim call does not carry
@@ -56,15 +65,21 @@ public struct AncestorClaimed has copy, drop {
     amount: u64,
 }
 
+public struct ProtocolFeesSwept has copy, drop {
+    ip: ID,
+    coin_type: TypeName,
+    amount: u64,
+}
+
 /// Pays royalties (or any revenue) to an IP, in any coin type the
 /// target has opted into (`accepted_currencies`; other types abort
 /// with `ECurrencyNotAccepted`). The terms' `currency` binds minting
 /// fees only, not payments. The ancestor cuts accrue inside the
 /// target's pool immediately.
 public fun pay<T>(
-    cfg: &mut ProtocolConfig,
+    cfg: &ProtocolConfig,
     target: &mut IPAsset,
-    mut payment: Coin<T>,
+    payment: Coin<T>,
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
@@ -72,7 +87,7 @@ public fun pay<T>(
     ip::assert_alive(target, clock);
     let gross = payment.value();
     assert!(gross > 0, EZeroPayment);
-    let protocol_fee = protocol::collect(cfg, &mut payment);
+    let protocol_fee = target.deposit(cfg, payment);
     event::emit(RoyaltyPaid {
         ip: object::id(target),
         payer: ctx.sender(),
@@ -80,7 +95,22 @@ public fun pay<T>(
         gross,
         protocol_fee,
     });
-    target.deposit(payment);
+}
+
+/// Moves the protocol fees accrued on `ip` in `T` into the protocol
+/// vault. Permissionless: the money is the protocol's either way, and
+/// the caller cannot direct it anywhere but the vault, so a keeper
+/// can batch sweeps without holding any capability. Aborts when
+/// nothing has accrued; a keeper should filter on `ip::protocol_owed`
+/// first.
+public fun sweep_protocol_fees<T>(cfg: &mut ProtocolConfig, ip: &mut IPAsset) {
+    let fees = ip::withdraw_protocol<T>(ip);
+    event::emit(ProtocolFeesSwept {
+        ip: object::id(ip),
+        coin_type: type_name::with_defining_ids<T>(),
+        amount: fees.value(),
+    });
+    protocol::deposit_fees(cfg, fees);
 }
 
 /// The IP owner's share: everything in the pool not owed to

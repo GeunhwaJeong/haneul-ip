@@ -25,10 +25,14 @@ use haneul_ip::test_helpers::{
     pay_royalty,
     mint_haneul,
     mint_license_to,
+    make_child,
+    setup_tag,
+    tag_ip,
 };
 
 const ADMIN: address = @0xAD;
 const ALICE: address = @0xA11CE;
+const BOB: address = @0xB0B;
 const CAROL: address = @0xCA401;
 
 fun set_fee(s: &mut Scenario, fee_bps: u64) {
@@ -46,6 +50,17 @@ fun set_paused(s: &mut Scenario, paused: bool) {
     let cap = s.take_from_sender<ProtocolCap>();
     protocol::set_paused(&mut cfg, &cap, paused);
     s.return_to_sender(cap);
+    ts::return_shared(cfg);
+}
+
+/// `caller` sweeps the HANEUL protocol fees accrued on `ip_id` into
+/// the vault.
+fun sweep(s: &mut Scenario, caller: address, ip_id: ID) {
+    s.next_tx(caller);
+    let mut cfg = s.take_shared<ProtocolConfig>();
+    let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
+    royalty::sweep_protocol_fees<HANEUL>(&mut cfg, &mut asset);
+    ts::return_shared(asset);
     ts::return_shared(cfg);
 }
 
@@ -81,10 +96,12 @@ fun zero_fee_passes_full_amount_to_pool() {
     s.end();
 }
 
-/// The fee switch: 5% set, a 1000 payment accrues 50 in the vault
-/// and 950 in the pool; the cap withdraws the 50.
+/// The fee switch: 5% set, a 1000 payment leaves 50 accrued on the
+/// IP as protocol_owed and 950 claimable by the owner. The vault
+/// stays empty until a sweep moves the 50 over; then the cap
+/// withdraws it.
 #[test]
-fun fee_switch_takes_cut_to_vault() {
+fun fee_switch_takes_cut_into_pool_then_vault() {
     let mut s = ts::begin(ADMIN);
     setup(&mut s);
     let clock = new_clock(&mut s);
@@ -102,26 +119,38 @@ fun fee_switch_takes_cut_to_vault() {
     assert!(coin_type == std::type_name::with_defining_ids<HANEUL>());
 
     s.next_tx(ADMIN);
+    let cfg = s.take_shared<ProtocolConfig>();
+    let asset = s.take_shared_by_id<IPAsset>(ip_id);
+    assert!(ip::protocol_owed<HANEUL>(&asset) == 50);
+    assert!(ip::claimable_by_owner<HANEUL>(&asset) == 950);
+    assert!(protocol::fees_accrued<HANEUL>(&cfg) == 0);
+    ts::return_shared(asset);
+    ts::return_shared(cfg);
+
+    sweep(&mut s, ADMIN, ip_id);
+
+    s.next_tx(ADMIN);
     let mut cfg = s.take_shared<ProtocolConfig>();
     let cap = s.take_from_sender<ProtocolCap>();
+    let asset = s.take_shared_by_id<IPAsset>(ip_id);
+    assert!(ip::protocol_owed<HANEUL>(&asset) == 0);
+    assert!(ip::claimable_by_owner<HANEUL>(&asset) == 950);
     assert!(protocol::fees_accrued<HANEUL>(&cfg) == 50);
     let withdrawn = protocol::withdraw_fees<HANEUL>(&mut cfg, &cap, s.ctx());
     assert!(withdrawn.value() == 50);
     assert!(protocol::fees_accrued<HANEUL>(&cfg) == 0);
     withdrawn.burn_for_testing();
     s.return_to_sender(cap);
-    ts::return_shared(cfg);
-    let asset = s.take_shared_by_id<IPAsset>(ip_id);
-    assert!(ip::claimable_by_owner<HANEUL>(&asset) == 950);
     ts::return_shared(asset);
+    ts::return_shared(cfg);
     clock.destroy_for_testing();
     s.end();
 }
 
-/// Fees accrue per coin type and keep accruing across payments; an
-/// empty vault refuses a withdrawal instead of minting a zero coin.
+/// Fees accrue per coin type and keep accruing across payments on
+/// the IP; one sweep carries the whole balance over.
 #[test]
-fun vault_accrues_per_currency_across_payments() {
+fun pool_accrues_per_currency_across_payments() {
     let mut s = ts::begin(ADMIN);
     setup(&mut s);
     let clock = new_clock(&mut s);
@@ -135,12 +164,144 @@ fun vault_accrues_per_currency_across_payments() {
     mint_license_to(&mut s, CAROL, ip_id, terms_id, 100, &clock);
 
     s.next_tx(ADMIN);
+    let asset = s.take_shared_by_id<IPAsset>(ip_id);
+    assert!(ip::protocol_owed<HANEUL>(&asset) == 50 + 150 + 5);
+    assert!(ip::protocol_owed<USDX>(&asset) == 0);
+    ts::return_shared(asset);
+
+    sweep(&mut s, ADMIN, ip_id);
+    s.next_tx(ADMIN);
     let cfg = s.take_shared<ProtocolConfig>();
     assert!(protocol::fees_accrued<HANEUL>(&cfg) == 50 + 150 + 5);
     assert!(protocol::fees_accrued<USDX>(&cfg) == 0);
     ts::return_shared(cfg);
     clock.destroy_for_testing();
     s.end();
+}
+
+/// The cut comes off the top: with a 5% protocol fee and a 10%
+/// ancestor share, a 1000 payment to the child splits 50 / 95 / 855.
+#[test]
+fun protocol_cut_comes_off_the_top_before_ancestor_split() {
+    let mut s = ts::begin(ADMIN);
+    setup(&mut s);
+    let clock = new_clock(&mut s);
+    let terms_id = std_terms(&mut s, 1_000, 0);
+    let (root_ip, _) = root_with_terms(&mut s, ALICE, 1, terms_id, &clock);
+    let (child_ip, _) = make_child(&mut s, BOB, root_ip, terms_id, 0, 2, &clock);
+    set_fee(&mut s, 500);
+
+    pay_royalty(&mut s, CAROL, child_ip, 1_000, &clock);
+    s.next_tx(ADMIN);
+    let child = s.take_shared_by_id<IPAsset>(child_ip);
+    assert!(ip::protocol_owed<HANEUL>(&child) == 50);
+    assert!(ip::claimable_by_ancestor<HANEUL>(&child, root_ip) == 95);
+    assert!(ip::claimable_by_owner<HANEUL>(&child) == 855);
+    ts::return_shared(child);
+    clock.destroy_for_testing();
+    s.end();
+}
+
+/// The hard bound is 100%: at that rate the whole payment is the
+/// protocol's, and neither the owner nor an ancestor has anything.
+#[test]
+fun full_fee_leaves_nothing_for_owner_or_ancestors() {
+    let mut s = ts::begin(ADMIN);
+    setup(&mut s);
+    let clock = new_clock(&mut s);
+    let terms_id = std_terms(&mut s, 1_000, 0);
+    let (root_ip, _) = root_with_terms(&mut s, ALICE, 1, terms_id, &clock);
+    let (child_ip, _) = make_child(&mut s, BOB, root_ip, terms_id, 0, 2, &clock);
+    set_fee(&mut s, 10_000);
+
+    pay_royalty(&mut s, CAROL, child_ip, 1_000, &clock);
+    s.next_tx(ADMIN);
+    let child = s.take_shared_by_id<IPAsset>(child_ip);
+    assert!(ip::protocol_owed<HANEUL>(&child) == 1_000);
+    assert!(ip::claimable_by_ancestor<HANEUL>(&child, root_ip) == 0);
+    assert!(ip::claimable_by_owner<HANEUL>(&child) == 0);
+    ts::return_shared(child);
+    clock.destroy_for_testing();
+    s.end();
+}
+
+/// Anyone may sweep: the caller holds no capability and cannot
+/// direct the money anywhere but the vault.
+#[test]
+fun sweep_is_permissionless() {
+    let mut s = ts::begin(ADMIN);
+    setup(&mut s);
+    let clock = new_clock(&mut s);
+    let terms_id = std_terms(&mut s, 1_000, 0);
+    let (ip_id, _) = root_with_terms(&mut s, ALICE, 1, terms_id, &clock);
+    set_fee(&mut s, 500);
+    pay_royalty(&mut s, CAROL, ip_id, 1_000, &clock);
+
+    sweep(&mut s, CAROL, ip_id);
+    s.next_tx(ADMIN);
+    let cfg = s.take_shared<ProtocolConfig>();
+    assert!(protocol::fees_accrued<HANEUL>(&cfg) == 50);
+    ts::return_shared(cfg);
+    clock.destroy_for_testing();
+    s.end();
+}
+
+/// Neither the pause switch nor a dispute tag blocks a sweep: it
+/// moves the protocol's own money and touches no user balance.
+#[test]
+fun sweep_ignores_pause_and_tags() {
+    let mut s = ts::begin(ADMIN);
+    setup(&mut s);
+    setup_tag(&mut s);
+    let clock = new_clock(&mut s);
+    let terms_id = std_terms(&mut s, 1_000, 0);
+    let (ip_id, _) = root_with_terms(&mut s, ALICE, 1, terms_id, &clock);
+    set_fee(&mut s, 500);
+    pay_royalty(&mut s, CAROL, ip_id, 1_000, &clock);
+    tag_ip(&mut s, ip_id, 7, &clock);
+    set_paused(&mut s, true);
+
+    sweep(&mut s, CAROL, ip_id);
+    s.next_tx(ADMIN);
+    let cfg = s.take_shared<ProtocolConfig>();
+    let asset = s.take_shared_by_id<IPAsset>(ip_id);
+    assert!(protocol::fees_accrued<HANEUL>(&cfg) == 50);
+    assert!(ip::protocol_owed<HANEUL>(&asset) == 0);
+    // The owner's 950 is still there, frozen behind the tag.
+    assert!(ip::claimable_by_owner<HANEUL>(&asset) == 950);
+    ts::return_shared(asset);
+    ts::return_shared(cfg);
+    clock.destroy_for_testing();
+    s.end();
+}
+
+#[test]
+#[expected_failure(abort_code = haneul_ip::ip::ENoProtocolFees)]
+fun sweep_with_nothing_accrued_aborts() {
+    let mut s = ts::begin(ADMIN);
+    setup(&mut s);
+    let clock = new_clock(&mut s);
+    let terms_id = std_terms(&mut s, 1_000, 0);
+    let (ip_id, _) = root_with_terms(&mut s, ALICE, 1, terms_id, &clock);
+    // Fee is 0, so the payment accrues nothing for the protocol.
+    pay_royalty(&mut s, CAROL, ip_id, 1_000, &clock);
+    sweep(&mut s, ADMIN, ip_id);
+    abort 99
+}
+
+#[test]
+#[expected_failure(abort_code = haneul_ip::ip::ENoProtocolFees)]
+fun second_sweep_aborts() {
+    let mut s = ts::begin(ADMIN);
+    setup(&mut s);
+    let clock = new_clock(&mut s);
+    let terms_id = std_terms(&mut s, 1_000, 0);
+    let (ip_id, _) = root_with_terms(&mut s, ALICE, 1, terms_id, &clock);
+    set_fee(&mut s, 500);
+    pay_royalty(&mut s, CAROL, ip_id, 1_000, &clock);
+    sweep(&mut s, ADMIN, ip_id);
+    sweep(&mut s, ADMIN, ip_id);
+    abort 99
 }
 
 #[test]
@@ -189,12 +350,12 @@ fun pause_blocks_license_mint() {
     set_paused(&mut s, true);
 
     s.next_tx(CAROL);
-    let mut cfg = s.take_shared<ProtocolConfig>();
+    let cfg = s.take_shared<ProtocolConfig>();
     let reg = s.take_shared<TermsRegistry>();
     let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
     let mut payment = mint_haneul(&mut s, 100);
     let lic =
-        license::mint<HANEUL>(&mut cfg, &mut asset, &reg, terms_id, &mut payment, 0, &clock, s.ctx());
+        license::mint<HANEUL>(&cfg, &mut asset, &reg, terms_id, &mut payment, 0, &clock, s.ctx());
     license::keep(lic, s.ctx());
     abort 99
 }
