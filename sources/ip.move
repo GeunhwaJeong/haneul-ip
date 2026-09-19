@@ -231,6 +231,13 @@ public struct LicenseeRevoked has copy, drop {
 /// Gated on the package version (not the pause switch: registration
 /// is not a money path) because it writes state that can never be
 /// corrected afterwards.
+///
+/// A fresh root accepts revenue in NO coin type yet: `royalty::pay`
+/// aborts with `ECurrencyNotAccepted` until the owner attaches terms
+/// (which opts into their currency) or calls `accept_currency`. A
+/// front end that wants a work payable from the start should put that
+/// call in the same transaction as the registration; the cap this
+/// returns makes that possible.
 public fun register(
     cfg: &ProtocolConfig,
     name: String,
