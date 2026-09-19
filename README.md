@@ -55,7 +55,7 @@ haneul move test --build-env mainnet
 
 The `--build-env` flag selects the framework dependency set; the package itself has no environment-specific code.
 
-The test suite currently covers 142 cases, 91 of which assert failure paths (wrong capabilities, exceeded limits, frozen assets, replayed evidence, and similar).
+The test suite currently covers 145 cases, 92 of which assert failure paths (wrong capabilities, exceeded limits, frozen assets, replayed evidence, and similar).
 
 ## Security
 
