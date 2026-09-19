@@ -143,6 +143,134 @@ fun stale_version_blocks_registration() {
     abort 99
 }
 
+/// The owner-only writes take the config for the same version gate:
+/// after an upgrade, the previous package's copies of these functions
+/// must not keep mutating assets past whatever rules the new version
+/// adds. One test per gated function.
+#[test]
+#[expected_failure(abort_code = haneul_ip::protocol::EWrongVersion)]
+fun stale_version_blocks_attach_terms() {
+    let mut s = ts::begin(ADMIN);
+    setup(&mut s);
+    let clock = new_clock(&mut s);
+    let terms_id = std_terms(&mut s, 1_000, 0);
+    let (ip_id, cap_id) = root(&mut s, ALICE, 1, &clock);
+    stale_config(&mut s);
+
+    s.next_tx(ALICE);
+    let cfg = s.take_shared<ProtocolConfig>();
+    let reg = s.take_shared<TermsRegistry>();
+    let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
+    let cap = s.take_from_sender_by_id<IPOwnerCap>(cap_id);
+    ip::attach_terms(&mut asset, &cfg, &cap, &reg, terms_id);
+    abort 99
+}
+
+#[test]
+#[expected_failure(abort_code = haneul_ip::protocol::EWrongVersion)]
+fun stale_version_blocks_licensing_config() {
+    let mut s = ts::begin(ADMIN);
+    setup(&mut s);
+    let clock = new_clock(&mut s);
+    let terms_id = std_terms(&mut s, 1_000, 0);
+    let (ip_id, cap_id) = root_with_terms(&mut s, ALICE, 1, terms_id, &clock);
+    stale_config(&mut s);
+
+    s.next_tx(ALICE);
+    let cfg = s.take_shared<ProtocolConfig>();
+    let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
+    let cap = s.take_from_sender_by_id<IPOwnerCap>(cap_id);
+    ip::set_licensing_config(&mut asset, &cfg, &cap, terms_id, true, option::none(), option::none());
+    abort 99
+}
+
+#[test]
+#[expected_failure(abort_code = haneul_ip::protocol::EWrongVersion)]
+fun stale_version_blocks_accept_currency() {
+    let mut s = ts::begin(ADMIN);
+    setup(&mut s);
+    let clock = new_clock(&mut s);
+    let (ip_id, cap_id) = root(&mut s, ALICE, 1, &clock);
+    stale_config(&mut s);
+
+    s.next_tx(ALICE);
+    let cfg = s.take_shared<ProtocolConfig>();
+    let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
+    let cap = s.take_from_sender_by_id<IPOwnerCap>(cap_id);
+    ip::accept_currency<C1>(&mut asset, &cfg, &cap);
+    abort 99
+}
+
+#[test]
+#[expected_failure(abort_code = haneul_ip::protocol::EWrongVersion)]
+fun stale_version_blocks_stop_accepting_currency() {
+    let mut s = ts::begin(ADMIN);
+    setup(&mut s);
+    let clock = new_clock(&mut s);
+    let (ip_id, cap_id) = root(&mut s, ALICE, 1, &clock);
+
+    s.next_tx(ALICE);
+    let cfg = s.take_shared<ProtocolConfig>();
+    let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
+    let cap = s.take_from_sender_by_id<IPOwnerCap>(cap_id);
+    ip::accept_currency<C1>(&mut asset, &cfg, &cap);
+    ts::return_shared(cfg);
+    ts::return_shared(asset);
+    s.return_to_sender(cap);
+    stale_config(&mut s);
+
+    s.next_tx(ALICE);
+    let cfg = s.take_shared<ProtocolConfig>();
+    let reg = s.take_shared<TermsRegistry>();
+    let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
+    let cap = s.take_from_sender_by_id<IPOwnerCap>(cap_id);
+    ip::stop_accepting_currency<C1>(&mut asset, &cfg, &cap, &reg);
+    abort 99
+}
+
+#[test]
+#[expected_failure(abort_code = haneul_ip::protocol::EWrongVersion)]
+fun stale_version_blocks_approve_licensee() {
+    let mut s = ts::begin(ADMIN);
+    setup(&mut s);
+    let clock = new_clock(&mut s);
+    let (ip_id, cap_id) = root(&mut s, ALICE, 1, &clock);
+    stale_config(&mut s);
+
+    s.next_tx(ALICE);
+    let cfg = s.take_shared<ProtocolConfig>();
+    let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
+    let cap = s.take_from_sender_by_id<IPOwnerCap>(cap_id);
+    ip::approve_licensee(&mut asset, &cfg, &cap, BOB);
+    abort 99
+}
+
+#[test]
+#[expected_failure(abort_code = haneul_ip::protocol::EWrongVersion)]
+fun stale_version_blocks_revoke_licensee() {
+    let mut s = ts::begin(ADMIN);
+    setup(&mut s);
+    let clock = new_clock(&mut s);
+    let (ip_id, cap_id) = root(&mut s, ALICE, 1, &clock);
+
+    s.next_tx(ALICE);
+    let cfg = s.take_shared<ProtocolConfig>();
+    let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
+    let cap = s.take_from_sender_by_id<IPOwnerCap>(cap_id);
+    ip::approve_licensee(&mut asset, &cfg, &cap, BOB);
+    ts::return_shared(cfg);
+    ts::return_shared(asset);
+    s.return_to_sender(cap);
+    stale_config(&mut s);
+
+    s.next_tx(ALICE);
+    let cfg = s.take_shared<ProtocolConfig>();
+    let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
+    let cap = s.take_from_sender_by_id<IPOwnerCap>(cap_id);
+    ip::revoke_licensee(&mut asset, &cfg, &cap, BOB);
+    abort 99
+}
+
 #[test]
 fun attach_terms_marks_ip() {
     let mut s = ts::begin(ADMIN);
