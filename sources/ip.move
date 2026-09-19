@@ -328,16 +328,27 @@ fun new_ip(
 }
 
 // === Terms management (owner-only) ===
+//
+// Every owner-only write below takes the `ProtocolConfig` and checks
+// its version first. None of them is a money path, so the pause
+// switch does not apply, but they all mutate the asset, and after a
+// package upgrade the previous package's copies of these functions
+// stay callable forever. Without the gate, an invariant added in a
+// later version could be bypassed by calling the older entry point;
+// with it, `protocol::migrate` shuts the old copies off. The config is
+// only read, so these writes never contend on it.
 
 /// Only roots attach terms; a derivative's terms are fixed at
 /// registration, so the deal a work was born under cannot be
 /// rewritten afterwards.
 public fun attach_terms(
     self: &mut IPAsset,
+    cfg: &ProtocolConfig,
     cap: &IPOwnerCap,
     reg: &TermsRegistry,
     terms_id: u64,
 ) {
+    protocol::assert_current_version(cfg);
     self.assert_owner(cap);
     self.assert_not_tagged();
     assert!(self.parents.is_empty(), ENotRoot);
@@ -351,7 +362,8 @@ public fun attach_terms(
 
 // === Revenue currencies and licensee approvals (owner-only) ===
 
-public fun accept_currency<T>(self: &mut IPAsset, cap: &IPOwnerCap) {
+public fun accept_currency<T>(self: &mut IPAsset, cfg: &ProtocolConfig, cap: &IPOwnerCap) {
+    protocol::assert_current_version(cfg);
     self.assert_owner(cap);
     accept_currency_internal(self, type_name::with_defining_ids<T>());
 }
@@ -363,9 +375,11 @@ public fun accept_currency<T>(self: &mut IPAsset, cap: &IPOwnerCap) {
 /// every mint under those terms abort while the terms stay on offer.
 public fun stop_accepting_currency<T>(
     self: &mut IPAsset,
+    cfg: &ProtocolConfig,
     cap: &IPOwnerCap,
     reg: &TermsRegistry,
 ) {
+    protocol::assert_current_version(cfg);
     self.assert_owner(cap);
     let currency = type_name::with_defining_ids<T>();
     let attached = self.attached_terms.keys();
@@ -384,7 +398,13 @@ public fun stop_accepting_currency<T>(
 /// require. This runs BEFORE the licensee pays anything, in the
 /// owner's own transaction; revocation only affects future mints,
 /// never a license already paid for.
-public fun approve_licensee(self: &mut IPAsset, cap: &IPOwnerCap, licensee: address) {
+public fun approve_licensee(
+    self: &mut IPAsset,
+    cfg: &ProtocolConfig,
+    cap: &IPOwnerCap,
+    licensee: address,
+) {
+    protocol::assert_current_version(cfg);
     self.assert_owner(cap);
     if (self.approved_licensees.contains(&licensee)) return;
     assert!(self.approved_licensees.length() < MAX_APPROVED_LICENSEES, ETooManyApprovals);
@@ -392,7 +412,13 @@ public fun approve_licensee(self: &mut IPAsset, cap: &IPOwnerCap, licensee: addr
     event::emit(LicenseeApproved { ip: object::id(self), licensee });
 }
 
-public fun revoke_licensee(self: &mut IPAsset, cap: &IPOwnerCap, licensee: address) {
+public fun revoke_licensee(
+    self: &mut IPAsset,
+    cfg: &ProtocolConfig,
+    cap: &IPOwnerCap,
+    licensee: address,
+) {
+    protocol::assert_current_version(cfg);
     self.assert_owner(cap);
     if (self.approved_licensees.contains(&licensee)) {
         self.approved_licensees.remove(&licensee);
@@ -409,12 +435,14 @@ fun accept_currency_internal(self: &mut IPAsset, currency: TypeName) {
 
 public fun set_licensing_config(
     self: &mut IPAsset,
+    cfg: &ProtocolConfig,
     cap: &IPOwnerCap,
     terms_id: u64,
     disabled: bool,
     minting_fee_override: Option<u64>,
     rev_share_override_bps: Option<u64>,
 ) {
+    protocol::assert_current_version(cfg);
     self.assert_owner(cap);
     assert!(self.attached_terms.contains(&terms_id), ETermsNotAttached);
     if (rev_share_override_bps.is_some()) {

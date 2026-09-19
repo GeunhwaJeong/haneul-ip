@@ -48,30 +48,30 @@ public struct C17 {}
 
 /// Fills the accepted-currency set of a terms-free root to exactly
 /// MAX_ACCEPTED_CURRENCIES (16) entries.
-fun accept_sixteen(asset: &mut IPAsset, cap: &IPOwnerCap) {
-    ip::accept_currency<C1>(asset, cap);
-    ip::accept_currency<C2>(asset, cap);
-    ip::accept_currency<C3>(asset, cap);
-    ip::accept_currency<C4>(asset, cap);
-    ip::accept_currency<C5>(asset, cap);
-    ip::accept_currency<C6>(asset, cap);
-    ip::accept_currency<C7>(asset, cap);
-    ip::accept_currency<C8>(asset, cap);
-    ip::accept_currency<C9>(asset, cap);
-    ip::accept_currency<C10>(asset, cap);
-    ip::accept_currency<C11>(asset, cap);
-    ip::accept_currency<C12>(asset, cap);
-    ip::accept_currency<C13>(asset, cap);
-    ip::accept_currency<C14>(asset, cap);
-    ip::accept_currency<C15>(asset, cap);
-    ip::accept_currency<C16>(asset, cap);
+fun accept_sixteen(asset: &mut IPAsset, cfg: &ProtocolConfig, cap: &IPOwnerCap) {
+    ip::accept_currency<C1>(asset, cfg, cap);
+    ip::accept_currency<C2>(asset, cfg, cap);
+    ip::accept_currency<C3>(asset, cfg, cap);
+    ip::accept_currency<C4>(asset, cfg, cap);
+    ip::accept_currency<C5>(asset, cfg, cap);
+    ip::accept_currency<C6>(asset, cfg, cap);
+    ip::accept_currency<C7>(asset, cfg, cap);
+    ip::accept_currency<C8>(asset, cfg, cap);
+    ip::accept_currency<C9>(asset, cfg, cap);
+    ip::accept_currency<C10>(asset, cfg, cap);
+    ip::accept_currency<C11>(asset, cfg, cap);
+    ip::accept_currency<C12>(asset, cfg, cap);
+    ip::accept_currency<C13>(asset, cfg, cap);
+    ip::accept_currency<C14>(asset, cfg, cap);
+    ip::accept_currency<C15>(asset, cfg, cap);
+    ip::accept_currency<C16>(asset, cfg, cap);
 }
 
 /// Approves `n` distinct licensees derived from sequential integers.
-fun approve_many(asset: &mut IPAsset, cap: &IPOwnerCap, n: u64) {
+fun approve_many(asset: &mut IPAsset, cfg: &ProtocolConfig, cap: &IPOwnerCap, n: u64) {
     let mut i = 0;
     while (i < n) {
-        ip::approve_licensee(asset, cap, haneul::address::from_u256(i as u256));
+        ip::approve_licensee(asset, cfg, cap, haneul::address::from_u256(i as u256));
         i = i + 1;
     };
 }
@@ -143,6 +143,134 @@ fun stale_version_blocks_registration() {
     abort 99
 }
 
+/// The owner-only writes take the config for the same version gate:
+/// after an upgrade, the previous package's copies of these functions
+/// must not keep mutating assets past whatever rules the new version
+/// adds. One test per gated function.
+#[test]
+#[expected_failure(abort_code = haneul_ip::protocol::EWrongVersion)]
+fun stale_version_blocks_attach_terms() {
+    let mut s = ts::begin(ADMIN);
+    setup(&mut s);
+    let clock = new_clock(&mut s);
+    let terms_id = std_terms(&mut s, 1_000, 0);
+    let (ip_id, cap_id) = root(&mut s, ALICE, 1, &clock);
+    stale_config(&mut s);
+
+    s.next_tx(ALICE);
+    let cfg = s.take_shared<ProtocolConfig>();
+    let reg = s.take_shared<TermsRegistry>();
+    let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
+    let cap = s.take_from_sender_by_id<IPOwnerCap>(cap_id);
+    ip::attach_terms(&mut asset, &cfg, &cap, &reg, terms_id);
+    abort 99
+}
+
+#[test]
+#[expected_failure(abort_code = haneul_ip::protocol::EWrongVersion)]
+fun stale_version_blocks_licensing_config() {
+    let mut s = ts::begin(ADMIN);
+    setup(&mut s);
+    let clock = new_clock(&mut s);
+    let terms_id = std_terms(&mut s, 1_000, 0);
+    let (ip_id, cap_id) = root_with_terms(&mut s, ALICE, 1, terms_id, &clock);
+    stale_config(&mut s);
+
+    s.next_tx(ALICE);
+    let cfg = s.take_shared<ProtocolConfig>();
+    let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
+    let cap = s.take_from_sender_by_id<IPOwnerCap>(cap_id);
+    ip::set_licensing_config(&mut asset, &cfg, &cap, terms_id, true, option::none(), option::none());
+    abort 99
+}
+
+#[test]
+#[expected_failure(abort_code = haneul_ip::protocol::EWrongVersion)]
+fun stale_version_blocks_accept_currency() {
+    let mut s = ts::begin(ADMIN);
+    setup(&mut s);
+    let clock = new_clock(&mut s);
+    let (ip_id, cap_id) = root(&mut s, ALICE, 1, &clock);
+    stale_config(&mut s);
+
+    s.next_tx(ALICE);
+    let cfg = s.take_shared<ProtocolConfig>();
+    let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
+    let cap = s.take_from_sender_by_id<IPOwnerCap>(cap_id);
+    ip::accept_currency<C1>(&mut asset, &cfg, &cap);
+    abort 99
+}
+
+#[test]
+#[expected_failure(abort_code = haneul_ip::protocol::EWrongVersion)]
+fun stale_version_blocks_stop_accepting_currency() {
+    let mut s = ts::begin(ADMIN);
+    setup(&mut s);
+    let clock = new_clock(&mut s);
+    let (ip_id, cap_id) = root(&mut s, ALICE, 1, &clock);
+
+    s.next_tx(ALICE);
+    let cfg = s.take_shared<ProtocolConfig>();
+    let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
+    let cap = s.take_from_sender_by_id<IPOwnerCap>(cap_id);
+    ip::accept_currency<C1>(&mut asset, &cfg, &cap);
+    ts::return_shared(cfg);
+    ts::return_shared(asset);
+    s.return_to_sender(cap);
+    stale_config(&mut s);
+
+    s.next_tx(ALICE);
+    let cfg = s.take_shared<ProtocolConfig>();
+    let reg = s.take_shared<TermsRegistry>();
+    let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
+    let cap = s.take_from_sender_by_id<IPOwnerCap>(cap_id);
+    ip::stop_accepting_currency<C1>(&mut asset, &cfg, &cap, &reg);
+    abort 99
+}
+
+#[test]
+#[expected_failure(abort_code = haneul_ip::protocol::EWrongVersion)]
+fun stale_version_blocks_approve_licensee() {
+    let mut s = ts::begin(ADMIN);
+    setup(&mut s);
+    let clock = new_clock(&mut s);
+    let (ip_id, cap_id) = root(&mut s, ALICE, 1, &clock);
+    stale_config(&mut s);
+
+    s.next_tx(ALICE);
+    let cfg = s.take_shared<ProtocolConfig>();
+    let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
+    let cap = s.take_from_sender_by_id<IPOwnerCap>(cap_id);
+    ip::approve_licensee(&mut asset, &cfg, &cap, BOB);
+    abort 99
+}
+
+#[test]
+#[expected_failure(abort_code = haneul_ip::protocol::EWrongVersion)]
+fun stale_version_blocks_revoke_licensee() {
+    let mut s = ts::begin(ADMIN);
+    setup(&mut s);
+    let clock = new_clock(&mut s);
+    let (ip_id, cap_id) = root(&mut s, ALICE, 1, &clock);
+
+    s.next_tx(ALICE);
+    let cfg = s.take_shared<ProtocolConfig>();
+    let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
+    let cap = s.take_from_sender_by_id<IPOwnerCap>(cap_id);
+    ip::approve_licensee(&mut asset, &cfg, &cap, BOB);
+    ts::return_shared(cfg);
+    ts::return_shared(asset);
+    s.return_to_sender(cap);
+    stale_config(&mut s);
+
+    s.next_tx(ALICE);
+    let cfg = s.take_shared<ProtocolConfig>();
+    let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
+    let cap = s.take_from_sender_by_id<IPOwnerCap>(cap_id);
+    ip::revoke_licensee(&mut asset, &cfg, &cap, BOB);
+    abort 99
+}
+
 #[test]
 fun attach_terms_marks_ip() {
     let mut s = ts::begin(ADMIN);
@@ -172,10 +300,11 @@ fun attach_with_wrong_cap_aborts() {
     let (_, bob_cap_id) = root(&mut s, BOB, 2, &clock);
 
     s.next_tx(BOB);
+    let cfg = s.take_shared<ProtocolConfig>();
     let mut asset = s.take_shared_by_id<IPAsset>(alice_ip);
     let bob_cap = s.take_from_sender_by_id<IPOwnerCap>(bob_cap_id);
     let reg = s.take_shared<TermsRegistry>();
-    ip::attach_terms(&mut asset, &bob_cap, &reg, terms_id);
+    ip::attach_terms(&mut asset, &cfg, &bob_cap, &reg, terms_id);
     abort 99
 }
 
@@ -189,10 +318,11 @@ fun attach_same_terms_twice_aborts() {
     let (ip_id, cap_id) = root_with_terms(&mut s, ALICE, 1, terms_id, &clock);
 
     s.next_tx(ALICE);
+    let cfg = s.take_shared<ProtocolConfig>();
     let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
     let cap = s.take_from_sender_by_id<IPOwnerCap>(cap_id);
     let reg = s.take_shared<TermsRegistry>();
-    ip::attach_terms(&mut asset, &cap, &reg, terms_id);
+    ip::attach_terms(&mut asset, &cfg, &cap, &reg, terms_id);
     abort 99
 }
 
@@ -205,10 +335,11 @@ fun attach_unknown_terms_aborts() {
     let (ip_id, cap_id) = root(&mut s, ALICE, 1, &clock);
 
     s.next_tx(ALICE);
+    let cfg = s.take_shared<ProtocolConfig>();
     let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
     let cap = s.take_from_sender_by_id<IPOwnerCap>(cap_id);
     let reg = s.take_shared<TermsRegistry>();
-    ip::attach_terms(&mut asset, &cap, &reg, 42);
+    ip::attach_terms(&mut asset, &cfg, &cap, &reg, 42);
     abort 99
 }
 
@@ -226,10 +357,11 @@ fun attach_on_derivative_aborts() {
     let (child_ip, child_cap_id) = make_child(&mut s, BOB, parent_ip, terms_id, 0, 2, &clock);
 
     s.next_tx(BOB);
+    let cfg = s.take_shared<ProtocolConfig>();
     let mut child = s.take_shared_by_id<IPAsset>(child_ip);
     let cap = s.take_from_sender_by_id<IPOwnerCap>(child_cap_id);
     let reg = s.take_shared<TermsRegistry>();
-    ip::attach_terms(&mut child, &cap, &reg, other_terms);
+    ip::attach_terms(&mut child, &cfg, &cap, &reg, other_terms);
     abort 99
 }
 
@@ -244,6 +376,7 @@ fun licensing_config_overrides_effective_values() {
     let (ip_id, cap_id) = root_with_terms(&mut s, ALICE, 1, terms_id, &clock);
 
     s.next_tx(ALICE);
+    let cfg = s.take_shared<ProtocolConfig>();
     let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
     let cap = s.take_from_sender_by_id<IPOwnerCap>(cap_id);
     let reg = s.take_shared<TermsRegistry>();
@@ -253,6 +386,7 @@ fun licensing_config_overrides_effective_values() {
 
     ip::set_licensing_config(
         &mut asset,
+        &cfg,
         &cap,
         terms_id,
         false,
@@ -263,10 +397,11 @@ fun licensing_config_overrides_effective_values() {
     assert!(ip::effective_rev_share_bps(&asset, terms_id, t) == 2_500);
 
     // Overwriting with empty overrides falls back to the terms.
-    ip::set_licensing_config(&mut asset, &cap, terms_id, false, option::none(), option::none());
+    ip::set_licensing_config(&mut asset, &cfg, &cap, terms_id, false, option::none(), option::none());
     assert!(ip::effective_minting_fee(&asset, terms_id, t) == 100);
     assert!(ip::effective_rev_share_bps(&asset, terms_id, t) == 1_000);
 
+    ts::return_shared(cfg);
     ts::return_shared(reg);
     ts::return_shared(asset);
     s.return_to_sender(cap);
@@ -283,11 +418,13 @@ fun accepted_currencies_reach_the_bound() {
     let (ip_id, cap_id) = root(&mut s, ALICE, 1, &clock);
 
     s.next_tx(ALICE);
+    let cfg = s.take_shared<ProtocolConfig>();
     let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
     let cap = s.take_from_sender_by_id<IPOwnerCap>(cap_id);
-    accept_sixteen(&mut asset, &cap);
+    accept_sixteen(&mut asset, &cfg, &cap);
     assert!(ip::is_currency_accepted<C1>(&asset));
     assert!(ip::is_currency_accepted<C16>(&asset));
+    ts::return_shared(cfg);
     ts::return_shared(asset);
     s.return_to_sender(cap);
     clock.destroy_for_testing();
@@ -305,10 +442,11 @@ fun seventeenth_currency_aborts() {
     let (ip_id, cap_id) = root(&mut s, ALICE, 1, &clock);
 
     s.next_tx(ALICE);
+    let cfg = s.take_shared<ProtocolConfig>();
     let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
     let cap = s.take_from_sender_by_id<IPOwnerCap>(cap_id);
-    accept_sixteen(&mut asset, &cap);
-    ip::accept_currency<C17>(&mut asset, &cap);
+    accept_sixteen(&mut asset, &cfg, &cap);
+    ip::accept_currency<C17>(&mut asset, &cfg, &cap);
     abort 99
 }
 
@@ -322,13 +460,15 @@ fun approval_list_reaches_the_bound() {
     let (ip_id, cap_id) = root(&mut s, ALICE, 1, &clock);
 
     s.next_tx(ALICE);
+    let cfg = s.take_shared<ProtocolConfig>();
     let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
     let cap = s.take_from_sender_by_id<IPOwnerCap>(cap_id);
-    approve_many(&mut asset, &cap, 128);
+    approve_many(&mut asset, &cfg, &cap, 128);
     assert!(ip::is_approved_licensee(&asset, haneul::address::from_u256(0)));
     assert!(ip::is_approved_licensee(&asset, haneul::address::from_u256(127)));
     // Already approved: returns instead of tripping the bound.
-    ip::approve_licensee(&mut asset, &cap, haneul::address::from_u256(0));
+    ip::approve_licensee(&mut asset, &cfg, &cap, haneul::address::from_u256(0));
+    ts::return_shared(cfg);
     ts::return_shared(asset);
     s.return_to_sender(cap);
     clock.destroy_for_testing();
@@ -346,9 +486,10 @@ fun the_129th_licensee_aborts() {
     let (ip_id, cap_id) = root(&mut s, ALICE, 1, &clock);
 
     s.next_tx(ALICE);
+    let cfg = s.take_shared<ProtocolConfig>();
     let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
     let cap = s.take_from_sender_by_id<IPOwnerCap>(cap_id);
-    approve_many(&mut asset, &cap, 129);
+    approve_many(&mut asset, &cfg, &cap, 129);
     abort 99
 }
 
@@ -362,9 +503,10 @@ fun config_rev_share_above_100_percent_aborts() {
     let (ip_id, cap_id) = root_with_terms(&mut s, ALICE, 1, terms_id, &clock);
 
     s.next_tx(ALICE);
+    let cfg = s.take_shared<ProtocolConfig>();
     let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
     let cap = s.take_from_sender_by_id<IPOwnerCap>(cap_id);
-    ip::set_licensing_config(&mut asset, &cap, terms_id, false, option::none(), option::some(10_001));
+    ip::set_licensing_config(&mut asset, &cfg, &cap, terms_id, false, option::none(), option::some(10_001));
     abort 99
 }
 
@@ -378,8 +520,9 @@ fun config_on_unattached_terms_aborts() {
     let (ip_id, cap_id) = root(&mut s, ALICE, 1, &clock);
 
     s.next_tx(ALICE);
+    let cfg = s.take_shared<ProtocolConfig>();
     let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
     let cap = s.take_from_sender_by_id<IPOwnerCap>(cap_id);
-    ip::set_licensing_config(&mut asset, &cap, terms_id, false, option::none(), option::none());
+    ip::set_licensing_config(&mut asset, &cfg, &cap, terms_id, false, option::none(), option::none());
     abort 99
 }

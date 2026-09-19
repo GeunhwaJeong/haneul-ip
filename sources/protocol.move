@@ -24,12 +24,14 @@
 /// holder's admin calls and the sweep.
 ///
 /// The version gate is the third such one-way door. Every
-/// state-writing entry point in the package asserts that the shared
-/// object it touches matches the package VERSION, so after an upgrade
-/// the stale entry points of the previous package can be shut off by
-/// bumping the stored version (`migrate`). Only the singleton objects
-/// are gated; see `IPAsset.version` in `ip.move` for why the assets
-/// themselves are not.
+/// state-writing entry point in the package asserts that a versioned
+/// singleton matches the package VERSION, so after an upgrade the
+/// stale entry points of the previous package can be shut off by
+/// bumping the stored version (`migrate`). Writes that touch only an
+/// `IPAsset` (the owner-only functions in `ip.move`) read this config
+/// for the same check; only the singleton objects carry a version.
+/// See `IPAsset.version` in `ip.move` for why the assets themselves
+/// are not gated one by one.
 module haneul_ip::protocol;
 
 use haneul::bag::{Self, Bag};

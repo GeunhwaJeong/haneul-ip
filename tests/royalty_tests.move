@@ -174,9 +174,11 @@ fun multi_currency_pools_are_independent() {
     let (child_ip, child_cap_id) = make_child(&mut s, BOB, root_ip, terms_id, 0, 2, &clock);
 
     s.next_tx(BOB);
+    let cfg = s.take_shared<ProtocolConfig>();
     let mut child = s.take_shared_by_id<IPAsset>(child_ip);
     let child_cap = s.take_from_sender_by_id<IPOwnerCap>(child_cap_id);
-    ip::accept_currency<USDX>(&mut child, &child_cap);
+    ip::accept_currency<USDX>(&mut child, &cfg, &child_cap);
+    ts::return_shared(cfg);
     ts::return_shared(child);
     s.return_to_sender(child_cap);
 
@@ -301,10 +303,10 @@ fun stopped_currency_stays_claimable() {
     let reg = s.take_shared<TermsRegistry>();
     let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
     let cap = s.take_from_sender_by_id<IPOwnerCap>(cap_id);
-    ip::accept_currency<USDX>(&mut asset, &cap);
+    ip::accept_currency<USDX>(&mut asset, &cfg, &cap);
     let usdx = haneul::coin::mint_for_testing<USDX>(1_000, s.ctx());
     royalty::pay<USDX>(&cfg, &mut asset, usdx, &clock, s.ctx());
-    ip::stop_accepting_currency<USDX>(&mut asset, &cap, &reg);
+    ip::stop_accepting_currency<USDX>(&mut asset, &cfg, &cap, &reg);
     assert!(!ip::is_currency_accepted<USDX>(&asset));
     // The terms' own currency is untouched.
     assert!(ip::is_currency_accepted<HANEUL>(&asset));
@@ -333,10 +335,11 @@ fun stopping_a_terms_currency_aborts() {
     let (ip_id, cap_id) = root_with_terms(&mut s, ALICE, 1, terms_id, &clock);
 
     s.next_tx(ALICE);
+    let cfg = s.take_shared<ProtocolConfig>();
     let reg = s.take_shared<TermsRegistry>();
     let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
     let cap = s.take_from_sender_by_id<IPOwnerCap>(cap_id);
-    ip::stop_accepting_currency<HANEUL>(&mut asset, &cap, &reg);
+    ip::stop_accepting_currency<HANEUL>(&mut asset, &cfg, &cap, &reg);
     abort 99
 }
 

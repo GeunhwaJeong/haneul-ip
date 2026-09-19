@@ -42,6 +42,7 @@ Registration is self-attested: the chain records who claimed what and when, and 
 - **Opt-in revenue currencies.** An asset only accepts deposits in coin types it opted into (its terms' currencies, plus any the owner adds), so third parties cannot bloat it with junk-coin pools. Stopping a currency never blocks claims on funds already received.
 - **Fees accrue where they are earned.** The protocol's cut of a payment stays inside the paid asset's own pool as a separate bucket, so a payment writes only the asset it pays and never the shared protocol config. A permissionless sweep moves accrued fees into the per-currency vault on the config object, from which the capability holder withdraws. Payments to different assets therefore never contend on one object, and the protocol's income is readable as state either way.
 - **Consent before money.** Approval-gated terms check the licensor's on-chain allowlist at mint time, so nobody can end up holding a paid license they were never allowed to use.
+- **Upgrade-safe entry points.** Every function that writes state takes a versioned singleton (or the protocol config, for the owner-only writes on an asset) and aborts unless its stored version matches the package. After an upgrade, bumping that version shuts off the previous package's copies of every entry point, so a rule added later cannot be bypassed by calling the old one.
 
 ## Building and testing
 
@@ -54,7 +55,7 @@ haneul move test --build-env mainnet
 
 The `--build-env` flag selects the framework dependency set; the package itself has no environment-specific code.
 
-The test suite currently covers 136 cases, 85 of which assert failure paths (wrong capabilities, exceeded limits, frozen assets, replayed evidence, and similar).
+The test suite currently covers 142 cases, 91 of which assert failure paths (wrong capabilities, exceeded limits, frozen assets, replayed evidence, and similar).
 
 ## Security
 
