@@ -133,10 +133,12 @@ public fun root_with_terms(
 ): (ID, ID) {
     let (ip_id, cap_id) = root(s, owner, seed, clock);
     s.next_tx(owner);
+    let cfg = s.take_shared<ProtocolConfig>();
     let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
     let cap = s.take_from_sender_by_id<IPOwnerCap>(cap_id);
     let reg = s.take_shared<TermsRegistry>();
-    ip::attach_terms(&mut asset, &cap, &reg, terms_id);
+    ip::attach_terms(&mut asset, &cfg, &cap, &reg, terms_id);
+    ts::return_shared(cfg);
     ts::return_shared(reg);
     ts::return_shared(asset);
     s.return_to_sender(cap);
@@ -228,9 +230,11 @@ public fun approve(
     licensee: address,
 ) {
     s.next_tx(owner);
+    let cfg = s.take_shared<ProtocolConfig>();
     let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
     let cap = s.take_from_sender_by_id<IPOwnerCap>(cap_id);
-    ip::approve_licensee(&mut asset, &cap, licensee);
+    ip::approve_licensee(&mut asset, &cfg, &cap, licensee);
+    ts::return_shared(cfg);
     s.return_to_sender(cap);
     ts::return_shared(asset);
 }

@@ -72,9 +72,11 @@ fun mint_fee_above_max_fee_aborts() {
     let (ip_id, cap_id) = root_with_terms(&mut s, ALICE, 1, terms_id, &clock);
 
     s.next_tx(ALICE);
+    let cfg = s.take_shared<ProtocolConfig>();
     let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
     let cap = s.take_from_sender_by_id<IPOwnerCap>(cap_id);
-    ip::set_licensing_config(&mut asset, &cap, terms_id, false, option::some(200), option::none());
+    ip::set_licensing_config(&mut asset, &cfg, &cap, terms_id, false, option::some(200), option::none());
+    ts::return_shared(cfg);
     ts::return_shared(asset);
     s.return_to_sender(cap);
 
@@ -195,9 +197,11 @@ fun mint_on_disabled_config_aborts() {
     let (ip_id, cap_id) = root_with_terms(&mut s, ALICE, 1, terms_id, &clock);
 
     s.next_tx(ALICE);
+    let cfg = s.take_shared<ProtocolConfig>();
     let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
     let cap = s.take_from_sender_by_id<IPOwnerCap>(cap_id);
-    ip::set_licensing_config(&mut asset, &cap, terms_id, true, option::none(), option::none());
+    ip::set_licensing_config(&mut asset, &cfg, &cap, terms_id, true, option::none(), option::none());
+    ts::return_shared(cfg);
     ts::return_shared(asset);
     s.return_to_sender(cap);
 
@@ -277,9 +281,11 @@ fun license_snapshot_survives_config_change() {
     mint_license_to(&mut s, BOB, ip_id, terms_id, 0, &clock);
 
     s.next_tx(ALICE);
+    let cfg = s.take_shared<ProtocolConfig>();
     let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
     let cap = s.take_from_sender_by_id<IPOwnerCap>(cap_id);
-    ip::set_licensing_config(&mut asset, &cap, terms_id, false, option::none(), option::some(9_000));
+    ip::set_licensing_config(&mut asset, &cfg, &cap, terms_id, false, option::none(), option::some(9_000));
+    ts::return_shared(cfg);
     ts::return_shared(asset);
     s.return_to_sender(cap);
 
@@ -359,9 +365,11 @@ fun revoked_licensee_cannot_mint_again() {
     mint_license_to(&mut s, BOB, ip_id, approval_terms, 0, &clock);
 
     s.next_tx(ALICE);
+    let cfg = s.take_shared<ProtocolConfig>();
     let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
     let cap = s.take_from_sender_by_id<IPOwnerCap>(cap_id);
-    ip::revoke_licensee(&mut asset, &cap, BOB);
+    ip::revoke_licensee(&mut asset, &cfg, &cap, BOB);
+    ts::return_shared(cfg);
     ts::return_shared(asset);
     s.return_to_sender(cap);
 
