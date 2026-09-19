@@ -67,6 +67,26 @@ fun accept_sixteen(asset: &mut IPAsset, cfg: &ProtocolConfig, cap: &IPOwnerCap) 
     ip::accept_currency<C16>(asset, cfg, cap);
 }
 
+/// Registers `n` fresh terms sheets and attaches each to `ip_id`,
+/// one transaction per attachment.
+fun attach_many(s: &mut ts::Scenario, owner: address, ip_id: ID, cap_id: ID, n: u64) {
+    let mut i = 0;
+    while (i < n) {
+        let terms_id = std_terms(s, 1_000, 0);
+        s.next_tx(owner);
+        let cfg = s.take_shared<ProtocolConfig>();
+        let reg = s.take_shared<TermsRegistry>();
+        let mut asset = s.take_shared_by_id<IPAsset>(ip_id);
+        let cap = s.take_from_sender_by_id<IPOwnerCap>(cap_id);
+        ip::attach_terms(&mut asset, &cfg, &cap, &reg, terms_id);
+        ts::return_shared(cfg);
+        ts::return_shared(reg);
+        ts::return_shared(asset);
+        s.return_to_sender(cap);
+        i = i + 1;
+    };
+}
+
 /// Approves `n` distinct licensees derived from sequential integers.
 fun approve_many(asset: &mut IPAsset, cfg: &ProtocolConfig, cap: &IPOwnerCap, n: u64) {
     let mut i = 0;
@@ -362,6 +382,37 @@ fun attach_on_derivative_aborts() {
     let cap = s.take_from_sender_by_id<IPOwnerCap>(child_cap_id);
     let reg = s.take_shared<TermsRegistry>();
     ip::attach_terms(&mut child, &cfg, &cap, &reg, other_terms);
+    abort 99
+}
+
+/// A root can offer exactly MAX_ATTACHED_TERMS (32) terms sheets.
+#[test]
+fun attached_terms_reach_the_bound() {
+    let mut s = ts::begin(ADMIN);
+    setup(&mut s);
+    let clock = new_clock(&mut s);
+    let (ip_id, cap_id) = root(&mut s, ALICE, 1, &clock);
+    attach_many(&mut s, ALICE, ip_id, cap_id, 32);
+
+    s.next_tx(ALICE);
+    let asset = s.take_shared_by_id<IPAsset>(ip_id);
+    assert!(ip::has_terms(&asset, 1));
+    assert!(ip::has_terms(&asset, 32));
+    ts::return_shared(asset);
+    clock.destroy_for_testing();
+    s.end();
+}
+
+/// The bound keeps the per-terms walks on the asset cheap; the 33rd
+/// attachment is rejected.
+#[test]
+#[expected_failure(abort_code = haneul_ip::ip::ETooManyTerms)]
+fun the_33rd_terms_aborts() {
+    let mut s = ts::begin(ADMIN);
+    setup(&mut s);
+    let clock = new_clock(&mut s);
+    let (ip_id, cap_id) = root(&mut s, ALICE, 1, &clock);
+    attach_many(&mut s, ALICE, ip_id, cap_id, 33);
     abort 99
 }
 
