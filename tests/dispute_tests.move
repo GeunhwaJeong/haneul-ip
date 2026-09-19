@@ -288,6 +288,36 @@ fun initiator_can_cancel_before_judgement() {
     s.end();
 }
 
+/// Cancelling releases the evidence: nothing was decided, so the same
+/// hash may back a new dispute against the same target, here by a
+/// different initiator than the one who withdrew.
+#[test]
+fun cancelled_evidence_can_be_refiled() {
+    let mut s = ts::begin(ADMIN);
+    setup(&mut s);
+    setup_tag(&mut s);
+    let clock = new_clock(&mut s);
+    let terms_id = std_terms(&mut s, 1_000, 0);
+    let (ip_id, _) = root_with_terms(&mut s, ALICE, 1, terms_id, &clock);
+    let first = raise_as(&mut s, CAROL, ip_id, 9, &clock);
+
+    s.next_tx(CAROL);
+    let mut reg = s.take_shared<DisputeRegistry>();
+    dispute::cancel(&mut reg, first, s.ctx());
+    ts::return_shared(reg);
+
+    let second = raise_as(&mut s, BOB, ip_id, 9, &clock);
+    assert!(second == first + 1);
+
+    s.next_tx(ADMIN);
+    let reg = s.take_shared<DisputeRegistry>();
+    assert!(dispute::state(&reg, first) == dispute::cancelled());
+    assert!(dispute::state(&reg, second) == dispute::in_dispute());
+    ts::return_shared(reg);
+    clock.destroy_for_testing();
+    s.end();
+}
+
 #[test]
 #[expected_failure(abort_code = haneul_ip::dispute::ENotInitiator)]
 fun cancel_by_stranger_aborts() {

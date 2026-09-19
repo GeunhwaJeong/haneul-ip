@@ -92,6 +92,10 @@ public struct DisputeRegistry has key {
     /// one dispute PER TARGET (anti-spam): re-filing the same evidence
     /// against the same IP is blocked, but one work plagiarized by two
     /// parties is two targets, each disputable with the same evidence.
+    /// A dispute the initiator cancels before judgement releases its
+    /// evidence again (nothing was decided about it); a dismissed one
+    /// keeps it consumed, so a claim the arbiter rejected cannot be
+    /// re-filed verbatim.
     used_evidence: Table<vector<u8>, bool>,
     /// bcs(child, source_dispute) -> already propagated.
     propagated: Table<vector<u8>, bool>,
@@ -248,6 +252,11 @@ public fun judge(
 }
 
 /// The initiator may withdraw a dispute that has not been judged.
+/// Cancelling releases the evidence for the target: no judgement was
+/// made, so the same evidence may back a fresh dispute later, whether
+/// by the same initiator or by someone else. Without this, a stranger
+/// who learned an evidence hash could file and cancel it first and
+/// lock the real complainant out for good.
 public fun cancel(reg: &mut DisputeRegistry, dispute_id: u64, ctx: &TxContext) {
     assert_current_version(reg);
     assert!(reg.disputes.contains(dispute_id), EDisputeNotFound);
@@ -255,6 +264,8 @@ public fun cancel(reg: &mut DisputeRegistry, dispute_id: u64, ctx: &TxContext) {
     assert!(dispute.state == DisputeState::InDispute, ENotInDispute);
     assert!(ctx.sender() == dispute.initiator, ENotInitiator);
     dispute.state = DisputeState::Cancelled;
+    let evidence_key = evidence_key(dispute.target, &dispute.evidence_hash);
+    reg.used_evidence.remove(evidence_key);
     event::emit(DisputeCancelled { dispute_id });
 }
 

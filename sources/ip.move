@@ -68,6 +68,8 @@ const ETooManyApprovals: vector<u8> = b"The approved-licensee limit has been rea
 const ECurrencyBoundToTerms: vector<u8> = b"Attached terms charge their minting fee in this currency; it cannot be stopped.";
 #[error(code = 15)]
 const ENoProtocolFees: vector<u8> = b"No protocol fees have accrued on this IP asset in this coin type.";
+#[error(code = 16)]
+const ETooManyTerms: vector<u8> = b"The attached-terms limit has been reached.";
 
 const BPS_DENOM: u64 = 10_000;
 const CONTENT_HASH_LENGTH: u64 = 32;
@@ -77,6 +79,12 @@ const MAX_ACCEPTED_CURRENCIES: u64 = 16;
 /// Bounds the approval allowlist; an owner needing more should model
 /// the franchise as multiple IPs.
 const MAX_APPROVED_LICENSEES: u64 = 128;
+/// Bounds the terms a root can offer at once. `stop_accepting_currency`
+/// walks the set, and `configs` can hold one entry per attached terms,
+/// so an unbounded set would let an owner grow their own object past
+/// what those paths can afford. Derivatives never reach this bound:
+/// they inherit at most one terms per parent.
+const MAX_ATTACHED_TERMS: u64 = 32;
 
 public struct IPAsset has key {
     id: UID,
@@ -223,6 +231,13 @@ public struct LicenseeRevoked has copy, drop {
 /// Gated on the package version (not the pause switch: registration
 /// is not a money path) because it writes state that can never be
 /// corrected afterwards.
+///
+/// A fresh root accepts revenue in NO coin type yet: `royalty::pay`
+/// aborts with `ECurrencyNotAccepted` until the owner attaches terms
+/// (which opts into their currency) or calls `accept_currency`. A
+/// front end that wants a work payable from the start should put that
+/// call in the same transaction as the registration; the cap this
+/// returns makes that possible.
 public fun register(
     cfg: &ProtocolConfig,
     name: String,
@@ -354,6 +369,7 @@ public fun attach_terms(
     assert!(self.parents.is_empty(), ENotRoot);
     assert!(terms::exists_(reg, terms_id), ETermsNotFound);
     assert!(!self.attached_terms.contains(&terms_id), ETermsAlreadyAttached);
+    assert!(self.attached_terms.length() < MAX_ATTACHED_TERMS, ETooManyTerms);
     self.attached_terms.insert(terms_id);
     // Pricing terms in a currency is the natural opt-in to receive it.
     accept_currency_internal(self, terms::currency(terms::get(reg, terms_id)));
